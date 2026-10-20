@@ -13,7 +13,16 @@ export const MODULE_IDS = [
 ] as const;
 
 export type ModuleId = (typeof MODULE_IDS)[number];
+export const TEST_TYPE_IDS = ["SOA"] as const;
+export type TestTypeId = (typeof TEST_TYPE_IDS)[number];
 export type Placement = "full" | "left" | "right";
+
+export interface TestTypeProfile {
+  id: TestTypeId;
+  displayName: string;
+  moduleIds: readonly ModuleId[];
+  defaultModuleId: ModuleId;
+}
 export interface EvidenceModuleDefinition {
   id: ModuleId;
   displayName: string;

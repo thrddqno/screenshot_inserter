@@ -15,6 +15,9 @@ describe("task pane", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Test Evidence Inserter" })).toBeVisible();
+    const testType = screen.getByLabelText("Test Type");
+    expect(testType).toHaveValue("SOA");
+    expect(testType.querySelectorAll("option")).toHaveLength(1);
     expect(screen.getByText("Press Ctrl+V")).toBeVisible();
     expect(screen.getByRole("button", { name: "Insert Evidence" })).toBeDisabled();
     const evidenceType = screen.getByLabelText("Evidence Type");

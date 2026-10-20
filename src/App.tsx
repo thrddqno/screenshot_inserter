@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ALL_MODULES } from "./config/evidenceModules";
+import { EVIDENCE_MODULES } from "./config/evidenceModules";
 import { IMAGE_LIMITS } from "./config/layoutProfiles";
+import { AVAILABLE_TEST_TYPES, TEST_TYPE_PROFILES } from "./config/testTypeProfiles";
 import {
   insertEvidence,
   isOfficeHostAvailable,
@@ -14,6 +15,7 @@ import type {
   ModuleId,
   PendingImage,
   ScenarioContext,
+  TestTypeId,
 } from "./types/evidence";
 
 type Message = { kind: "success" | "error" | "info"; text: string } | null;
@@ -23,6 +25,7 @@ const errorMessage = (error: unknown): string =>
 
 export default function App() {
   const [scenario, setScenario] = useState<ScenarioContext | null>(null);
+  const [testTypeId, setTestTypeId] = useState<TestTypeId>("SOA");
   const [evidenceType, setEvidenceType] = useState<ModuleId>("GENERIC_SCREENSHOT");
   const [caption, setCaption] = useState("");
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
@@ -34,13 +37,19 @@ export default function App() {
   const refreshRunningRef = useRef(false);
   const refreshQueuedRef = useRef(false);
   const refreshGenerationRef = useRef(0);
+  const testTypeIdRef = useRef<TestTypeId>(testTypeId);
+
+  const selectedProfile = TEST_TYPE_PROFILES[testTypeId];
+  const availableModules = selectedProfile.moduleIds
+    .map((moduleId) => EVIDENCE_MODULES[moduleId])
+    .sort((a, b) => a.verticalOrder - b.verticalOrder || a.displayName.localeCompare(b.displayName));
 
   const refreshScenario = useCallback(async (invalidateImmediately = false) => {
     refreshGenerationRef.current += 1;
     refreshQueuedRef.current = true;
     if (invalidateImmediately && mountedRef.current) {
       setScenario(null);
-      setEvidenceType("GENERIC_SCREENSHOT");
+      setEvidenceType(TEST_TYPE_PROFILES[testTypeIdRef.current].defaultModuleId);
       setCaption("");
       setMessage({ kind: "info", text: "Reading workbook…" });
     }
@@ -57,7 +66,7 @@ export default function App() {
           const nextScenario = await readCurrentScenario();
           if (!mountedRef.current || generation !== refreshGenerationRef.current) continue;
           setScenario(nextScenario);
-          setEvidenceType("GENERIC_SCREENSHOT");
+          setEvidenceType(TEST_TYPE_PROFILES[testTypeIdRef.current].defaultModuleId);
           setCaption("");
           setMessage({ kind: "success", text: `Loaded ${nextScenario.scenarioId}.` });
         } catch (error) {
@@ -156,6 +165,7 @@ export default function App() {
     try {
       const name = await insertEvidence({
         scenario,
+        testTypeId,
         moduleId: evidenceType,
         image: pendingImage,
         caption: evidenceType === "GENERIC_SCREENSHOT" ? caption : "",
@@ -176,7 +186,7 @@ export default function App() {
     if (!scenario) return;
     setOperationBusy(true);
     try {
-      const name = await removeLastInsertedEvidence(scenario);
+      const name = await removeLastInsertedEvidence(scenario, testTypeId);
       setMessage({ kind: "success", text: `Removed ${name}.` });
     } catch (error) {
       setMessage({ kind: "error", text: errorMessage(error) });
@@ -193,6 +203,24 @@ export default function App() {
         <div>
           <p className="eyebrow">Excel evidence organizer</p>
           <h1>Test Evidence Inserter</h1>
+          <label className="test-type-field">
+            <span>Test Type</span>
+            <select
+              aria-label="Test Type"
+              value={testTypeId}
+              onChange={(event) => {
+                const nextTestTypeId = event.target.value as TestTypeId;
+                testTypeIdRef.current = nextTestTypeId;
+                setTestTypeId(nextTestTypeId);
+                setEvidenceType(TEST_TYPE_PROFILES[nextTestTypeId].defaultModuleId);
+                setCaption("");
+              }}
+            >
+              {AVAILABLE_TEST_TYPES.map((profile) => (
+                <option value={profile.id} key={profile.id}>{profile.displayName}</option>
+              ))}
+            </select>
+          </label>
         </div>
         <button className="button button-secondary" type="button" onClick={() => void refreshScenario(true)} disabled={busy}>
           Refresh
@@ -227,7 +255,7 @@ export default function App() {
               if (nextType !== "GENERIC_SCREENSHOT") setCaption("");
             }}
           >
-            {ALL_MODULES.map((module) => <option value={module.id} key={module.id}>{module.displayName}</option>)}
+            {availableModules.map((module) => <option value={module.id} key={module.id}>{module.displayName}</option>)}
           </select>
         </label>
         {evidenceType === "GENERIC_SCREENSHOT" ? (

@@ -25,6 +25,8 @@ button, input, select { font: inherit; }
 h1 { font-size: 22px; line-height: 1.2; margin: 2px 0 0; }
 h2 { font-size: 16px; margin: 0 0 10px; }
 .eyebrow { color: #0f6cbd; font-size: 12px; font-weight: 700; margin: 0; text-transform: uppercase; }
+.test-type-field { display: grid; gap: 3px; margin-top: 8px; max-width: 180px; }
+.test-type-field > span { font-size: 12px; font-weight: 600; }
 
 .panel {
   background: #fff;

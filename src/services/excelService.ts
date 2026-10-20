@@ -1,6 +1,13 @@
 import { EVIDENCE_MODULES } from "../config/evidenceModules";
 import { LAYOUT_CONFIG, WORKBOOK_CONFIG } from "../config/layoutProfiles";
-import type { EvidenceStatus, ModuleId, PendingImage, ScenarioContext } from "../types/evidence";
+import { isTestTypeId, TEST_TYPE_PROFILES } from "../config/testTypeProfiles";
+import type {
+  EvidenceStatus,
+  ModuleId,
+  PendingImage,
+  ScenarioContext,
+  TestTypeId,
+} from "../types/evidence";
 import { buildLayout, type LayoutAnchors, type LayoutImage, type Rectangle } from "./layoutEngine";
 import {
   captionShapeName,
@@ -13,7 +20,7 @@ import {
 
 const STATUS_VALUES = new Set<EvidenceStatus>(["UNCHANGED", "PASS", "FAIL", "BLOCKED"]);
 const CAPTION_MAXIMUM_LENGTH = 500;
-const MANAGED_METADATA_VERSION = 1;
+const MANAGED_METADATA_VERSION = 2;
 
 interface ManagedHeadingMetadata {
   address: string;
@@ -22,6 +29,7 @@ interface ManagedHeadingMetadata {
 
 interface ManagedShapeMetadata {
   version: number;
+  testTypeId: TestTypeId;
   caption: string;
   heading?: ManagedHeadingMetadata;
 }
@@ -37,22 +45,22 @@ const parseManagedMetadata = (
   moduleId: ModuleId,
 ): ManagedShapeMetadata => {
   if (description.length > 2_000) {
-    return {
-      version: MANAGED_METADATA_VERSION,
-      caption:
-        moduleId === "GENERIC_SCREENSHOT" ? description.slice(0, CAPTION_MAXIMUM_LENGTH) : "",
-    };
+    return legacyManagedMetadata(description, moduleId);
   }
   try {
     const value = JSON.parse(description) as Partial<ManagedShapeMetadata>;
     if (
-      value.version === MANAGED_METADATA_VERSION &&
+      (value.version === 1 || value.version === MANAGED_METADATA_VERSION) &&
       typeof value.caption === "string" &&
       value.caption.length <= CAPTION_MAXIMUM_LENGTH
     ) {
+      const testTypeId =
+        value.version === 1 ? "SOA" : isTestTypeId(value.testTypeId) ? value.testTypeId : undefined;
+      if (!testTypeId) return legacyManagedMetadata(description, moduleId);
       const heading = value.heading;
       return {
         version: MANAGED_METADATA_VERSION,
+        testTypeId,
         caption: moduleId === "GENERIC_SCREENSHOT" ? value.caption : "",
         heading:
           heading &&
@@ -66,11 +74,17 @@ const parseManagedMetadata = (
   } catch {
     // Older add-in versions stored a plain caption in alt text.
   }
-  return {
-    version: MANAGED_METADATA_VERSION,
-    caption: moduleId === "GENERIC_SCREENSHOT" ? description.slice(0, CAPTION_MAXIMUM_LENGTH) : "",
-  };
+  return legacyManagedMetadata(description, moduleId);
 };
+
+const legacyManagedMetadata = (
+  description: string,
+  moduleId: ModuleId,
+): ManagedShapeMetadata => ({
+    version: MANAGED_METADATA_VERSION,
+    testTypeId: "SOA",
+    caption: moduleId === "GENERIC_SCREENSHOT" ? description.slice(0, CAPTION_MAXIMUM_LENGTH) : "",
+  });
 
 export const toLiteralCellFormula = (value: string): string => (value === "" ? "" : `'${value}`);
 
@@ -156,6 +170,7 @@ export const readCurrentScenario = async (): Promise<ScenarioContext> => {
 
 interface InsertEvidenceInput {
   scenario: ScenarioContext;
+  testTypeId: TestTypeId;
   moduleId: ModuleId;
   image: PendingImage;
   caption: string;
@@ -203,6 +218,7 @@ const anchorsFromRanges = (
 
 export const insertEvidence = async ({
   scenario,
+  testTypeId,
   moduleId,
   image,
   caption,
@@ -210,6 +226,9 @@ export const insertEvidence = async ({
 }: InsertEvidenceInput): Promise<string> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
   if (!STATUS_VALUES.has(status)) throw new ExcelServiceError("Invalid status value.");
+  if (!isTestTypeId(testTypeId) || !TEST_TYPE_PROFILES[testTypeId].moduleIds.includes(moduleId)) {
+    throw new ExcelServiceError("Evidence type is unavailable for selected test type.");
+  }
   const effectiveCaption = moduleId === "GENERIC_SCREENSHOT" ? caption : "";
   if (effectiveCaption.length > CAPTION_MAXIMUM_LENGTH) {
     throw new ExcelServiceError(`Caption exceeds ${CAPTION_MAXIMUM_LENGTH} characters.`);
@@ -246,6 +265,7 @@ export const insertEvidence = async ({
         const parsed = parseImageShapeName(shape.name);
         if (parsed?.scenarioKey !== targetScenarioKey) continue;
         const metadata = parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId);
+        if (metadata.testTypeId !== testTypeId) continue;
         metadataByName.set(shape.name, metadata);
         modulesWithImages.add(parsed.moduleId);
         existingManagedBases.push(
@@ -274,13 +294,20 @@ export const insertEvidence = async ({
       });
       metadataByName.set(createdImageName, {
         version: MANAGED_METADATA_VERSION,
+        testTypeId,
         caption: effectiveCaption,
       });
       modulesWithImages.add(moduleId);
 
       const activeModules = [...modulesWithImages];
       const obstacles = shapes.items
-        .filter((shape) => !isManagedShapeName(shape.name))
+        .filter((shape) => {
+          const parsed = parseImageShapeName(shape.name);
+          if (parsed?.scenarioKey === targetScenarioKey) {
+            return parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId).testTypeId !== testTypeId;
+          }
+          return !isManagedShapeName(shape.name);
+        })
         .map((shape) => ({ left: shape.left, top: shape.top, width: shape.width, height: shape.height }));
       const requestedBaseTop =
         existingManagedBases.length > 0
@@ -319,8 +346,9 @@ export const insertEvidence = async ({
 
       for (const shape of shapes.items) {
         if (
-          shape.name.startsWith(`EVH__${targetScenarioKey}__`) ||
-          shape.name.startsWith(`EVC__${targetScenarioKey}__`)
+          testTypeId === "SOA" &&
+          (shape.name.startsWith(`EVH__${targetScenarioKey}__`) ||
+            shape.name.startsWith(`EVC__${targetScenarioKey}__`))
         ) {
           shape.delete();
         }
@@ -357,6 +385,7 @@ export const insertEvidence = async ({
         const layoutImage = imageByName.get(placement.name);
         shape.altTextDescription = JSON.stringify({
           version: MANAGED_METADATA_VERSION,
+          testTypeId,
           caption: layoutImage?.caption ?? "",
           heading: headingByGroupAndModule.get(`${placement.groupKey}|${placement.moduleId}`),
         } satisfies ManagedShapeMetadata);
@@ -388,7 +417,10 @@ export const insertEvidence = async ({
   }
 };
 
-export const removeLastInsertedEvidence = async (scenario: ScenarioContext): Promise<string> => {
+export const removeLastInsertedEvidence = async (
+  scenario: ScenarioContext,
+  testTypeId: TestTypeId,
+): Promise<string> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
 
   return Excel.run(async (context) => {
@@ -400,7 +432,14 @@ export const removeLastInsertedEvidence = async (scenario: ScenarioContext): Pro
     const targetScenarioKey = scenarioKey(scenario.scenarioId);
     const candidates = shapes.items
       .map((shape) => ({ shape, parsed: parseImageShapeName(shape.name) }))
-      .filter((item) => item.parsed?.scenarioKey === targetScenarioKey)
+      .filter(
+        (item) =>
+          item.parsed?.scenarioKey === targetScenarioKey &&
+          parseManagedMetadata(
+            item.shape.altTextDescription ?? "",
+            item.parsed.moduleId,
+          ).testTypeId === testTypeId,
+      )
       .sort((a, b) => b.parsed!.sequence - a.parsed!.sequence);
     const latest = candidates[0];
     if (!latest?.parsed) throw new ExcelServiceError("No add-in-created evidence exists for this scenario.");
