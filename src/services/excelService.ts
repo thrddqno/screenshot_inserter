@@ -380,8 +380,9 @@ export const insertEvidence = async ({
       for (const placement of plan.images) {
         const shape = shapeByName.get(placement.name);
         if (!shape) throw new ExcelServiceError(`Managed image "${placement.name}" is missing.`);
-        shape.lockAspectRatio = true;
+        shape.lockAspectRatio = false;
         setShapeRectangle(shape, placement);
+        shape.lockAspectRatio = true;
         const layoutImage = imageByName.get(placement.name);
         shape.altTextDescription = JSON.stringify({
           version: MANAGED_METADATA_VERSION,

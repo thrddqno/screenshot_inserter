@@ -9,8 +9,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     required: true,
     verticalOrder: 10,
     placement: "full",
-    maxWidth: 760,
-    maxHeight: 480,
   },
   SOA_BATCH: {
     id: "SOA_BATCH",
@@ -21,8 +19,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     verticalOrder: 20,
     placement: "left",
     pairingPartner: "SOA_BATCH_PAPERPLUS",
-    maxWidth: 760,
-    maxHeight: 360,
   },
   SOA_BATCH_PAPERPLUS: {
     id: "SOA_BATCH_PAPERPLUS",
@@ -33,8 +29,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     verticalOrder: 20,
     placement: "right",
     pairingPartner: "SOA_BATCH",
-    maxWidth: 760,
-    maxHeight: 360,
   },
   STATEMENT_DUPLICATE: {
     id: "STATEMENT_DUPLICATE",
@@ -44,8 +38,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     required: true,
     verticalOrder: 30,
     placement: "full",
-    maxWidth: 760,
-    maxHeight: 540,
   },
   RETAILER_STATEMENT_DUPLICATE: {
     id: "RETAILER_STATEMENT_DUPLICATE",
@@ -55,8 +47,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     required: true,
     verticalOrder: 30,
     placement: "left",
-    maxWidth: 760,
-    maxHeight: 540,
   },
   MCD: {
     id: "MCD",
@@ -66,8 +56,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     required: true,
     verticalOrder: 35,
     placement: "full",
-    maxWidth: 760,
-    maxHeight: 540,
   },
   PDF_PAPER: {
     id: "PDF_PAPER",
@@ -78,8 +66,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     verticalOrder: 40,
     placement: "left",
     pairingPartner: "AFP",
-    maxWidth: 760,
-    maxHeight: 540,
   },
   AFP: {
     id: "AFP",
@@ -90,8 +76,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     verticalOrder: 40,
     placement: "right",
     pairingPartner: "PDF_PAPER",
-    maxWidth: 760,
-    maxHeight: 540,
   },
   PDF_PAPERPLUS: {
     id: "PDF_PAPERPLUS",
@@ -102,8 +86,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     verticalOrder: 50,
     placement: "left",
     pairingPartner: "AFP_PAPERPLUS",
-    maxWidth: 760,
-    maxHeight: 540,
   },
   AFP_PAPERPLUS: {
     id: "AFP_PAPERPLUS",
@@ -114,8 +96,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     verticalOrder: 50,
     placement: "right",
     pairingPartner: "PDF_PAPERPLUS",
-    maxWidth: 760,
-    maxHeight: 540,
   },
   GENERIC_SCREENSHOT: {
     id: "GENERIC_SCREENSHOT",
@@ -125,8 +105,6 @@ export const EVIDENCE_MODULES: Record<ModuleId, EvidenceModuleDefinition> = {
     required: false,
     verticalOrder: 90,
     placement: "full",
-    maxWidth: 760,
-    maxHeight: 540,
   },
 };
 

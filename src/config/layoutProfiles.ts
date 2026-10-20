@@ -11,7 +11,6 @@ export const LAYOUT_CONFIG = {
   leftAnchorRange: "A1:D1",
   rightAnchorRange: "F1:I1",
   fullAnchorRange: "A1:D1",
-  outerPadding: 6,
   headingHeight: 20,
   headingGap: 6,
   itemGap: 12,

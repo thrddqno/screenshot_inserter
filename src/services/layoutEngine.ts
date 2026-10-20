@@ -52,17 +52,14 @@ export interface BuildLayoutInput {
   obstacles: readonly Rectangle[];
 }
 
-const fitImage = (
+const fitImageToSlotWidth = (
   naturalWidth: number,
   naturalHeight: number,
-  availableWidth: number,
-  maximumWidth: number,
-  maximumHeight: number,
+  slotWidth: number,
 ): { width: number; height: number } => {
   if (naturalWidth <= 0 || naturalHeight <= 0) throw new Error("Image dimensions must be positive.");
-  const widthLimit = Math.min(availableWidth, maximumWidth);
-  const scale = Math.min(widthLimit / naturalWidth, maximumHeight / naturalHeight);
-  return { width: naturalWidth * scale, height: naturalHeight * scale };
+  if (slotWidth <= 0) throw new Error("Image slot width must be positive.");
+  return { width: slotWidth, height: naturalHeight * (slotWidth / naturalWidth) };
 };
 
 const anchorFor = (anchors: LayoutAnchors, placement: Placement): Rectangle => anchors[placement];
@@ -191,9 +188,9 @@ export const buildLayout = ({
         moduleId,
         groupKey: group.key,
         text: group.genericHeading ?? definition.headingText,
-        left: anchor.left + LAYOUT_CONFIG.outerPadding,
+        left: anchor.left,
         top: headingTop,
-        width: anchor.width - LAYOUT_CONFIG.outerPadding * 2,
+        width: anchor.width,
         height: LAYOUT_CONFIG.headingHeight,
       });
     }
@@ -208,19 +205,17 @@ export const buildLayout = ({
         if (!image) continue;
         const definition = EVIDENCE_MODULES[moduleId];
         const anchor = anchorFor(anchors, definition.placement);
-        const size = fitImage(
+        const size = fitImageToSlotWidth(
           image.naturalWidth,
           image.naturalHeight,
-          anchor.width - LAYOUT_CONFIG.outerPadding * 2,
-          definition.maxWidth,
-          definition.maxHeight,
+          anchor.width,
         );
         const placement: ImagePlacement = {
           name: image.name,
           moduleId,
           sequence: image.sequence,
           groupKey: group.key,
-          left: anchor.left + LAYOUT_CONFIG.outerPadding,
+          left: anchor.left,
           top: rowTop,
           ...size,
         };

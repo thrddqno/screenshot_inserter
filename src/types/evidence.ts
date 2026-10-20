@@ -32,8 +32,6 @@ export interface EvidenceModuleDefinition {
   verticalOrder: number;
   placement: Placement;
   pairingPartner?: ModuleId;
-  maxWidth: number;
-  maxHeight: number;
 }
 
 export interface ScenarioContext {

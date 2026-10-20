@@ -131,6 +131,7 @@ New evidence headings use worksheet cells, not shapes:
 - Right cell: column `F`
 - Gray fill, bold black text
 - Images fit left `A:D` or right `F:I` slot
+- Every image spans its complete slot width; height follows original aspect ratio without cropping
 - MCD and Statement Duplicate intentionally have no heading
 - Header input appears only for Generic Screenshot
 

@@ -203,6 +203,7 @@ describe("Excel evidence service", () => {
       font: { bold: true, color: "#000000" },
     });
     const inserted = host.items.find((shape) => shape.name === name)!;
+    expect(inserted).toMatchObject({ left: 0, width: 400, height: 500, lockAspectRatio: true });
     expect(JSON.parse(inserted.altTextDescription ?? "{}")).toMatchObject({
       version: 2,
       testTypeId: "SOA",
@@ -243,6 +244,8 @@ describe("Excel evidence service", () => {
     const afp = host.items.find((shape) => shape.name === "EV__TS4_1_1__AFP__002")!;
     expect(pdf.top).toBe(firstPdfTop);
     expect(pdf.top).toBe(afp.top);
+    expect(pdf).toMatchObject({ left: 0, width: 400, lockAspectRatio: true });
+    expect(afp).toMatchObject({ left: 420, width: 400, lockAspectRatio: true });
     expect(pdf.left + pdf.width).toBeLessThan(afp.left);
 
     const removed = await removeLastInsertedEvidence(scenario, "SOA");

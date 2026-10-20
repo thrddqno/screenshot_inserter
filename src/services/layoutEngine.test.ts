@@ -4,7 +4,7 @@ import { buildLayout, rectanglesIntersect, type LayoutAnchors } from "./layoutEn
 const anchors: LayoutAnchors = {
   left: { left: 0, top: 0, width: 400, height: 0 },
   right: { left: 420, top: 0, width: 400, height: 0 },
-  full: { left: 0, top: 0, width: 820, height: 0 },
+  full: { left: 0, top: 0, width: 400, height: 0 },
 };
 
 describe("buildLayout", () => {
@@ -23,6 +23,8 @@ describe("buildLayout", () => {
     const afp = plan.images.find((image) => image.name === "afp")!;
     expect(pdf.top).toBe(afp.top);
     expect(rectanglesIntersect(pdf, afp)).toBe(false);
+    expect(pdf).toMatchObject({ left: 0, width: 400 });
+    expect(afp).toMatchObject({ left: 420, width: 400 });
     expect(pdf.width / pdf.height).toBeCloseTo(0.8);
     expect(afp.width / afp.height).toBeCloseTo(500 / 700);
   });
@@ -59,7 +61,7 @@ describe("buildLayout", () => {
       requestedBaseTop: 0,
       obstacles: [],
     });
-    expect(plan.images[0].left).toBeGreaterThanOrEqual(anchors.right.left);
+    expect(plan.images[0]).toMatchObject({ left: anchors.right.left, width: anchors.right.width });
   });
 
   it("upscales small screenshots to configured slot bounds", () => {
@@ -70,8 +72,51 @@ describe("buildLayout", () => {
       requestedBaseTop: 0,
       obstacles: [],
     });
-    expect(plan.images[0].width).toBe(388);
-    expect(plan.images[0].height).toBe(194);
+    expect(plan.images[0].width).toBe(400);
+    expect(plan.images[0].height).toBe(200);
+  });
+
+  it("fills A:D for a portrait Statement Duplicate without limiting height", () => {
+    const plan = buildLayout({
+      selectedModules: ["STATEMENT_DUPLICATE"],
+      images: [
+        {
+          name: "statement",
+          moduleId: "STATEMENT_DUPLICATE",
+          sequence: 1,
+          naturalWidth: 300,
+          naturalHeight: 1200,
+          caption: "",
+        },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+
+    expect(plan.images[0]).toMatchObject({ left: 0, width: 400, height: 1600 });
+    expect(plan.images[0].width / plan.images[0].height).toBeCloseTo(300 / 1200);
+  });
+
+  it("fills A:D for Generic Screenshots while preserving aspect ratio", () => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT"],
+      images: [
+        {
+          name: "generic",
+          moduleId: "GENERIC_SCREENSHOT",
+          sequence: 1,
+          naturalWidth: 1600,
+          naturalHeight: 900,
+          caption: "",
+        },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+
+    expect(plan.images[0]).toMatchObject({ left: 0, width: 400, height: 225 });
   });
 
   it("moves block below occupied geometry", () => {
