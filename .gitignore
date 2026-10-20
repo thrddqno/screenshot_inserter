@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+*.log
+*.xlsx
+*.xlsm
+.DS_Store
+.certs/

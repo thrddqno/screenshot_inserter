@@ -1,0 +1,180 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PendingImage, ScenarioContext } from "../types/evidence";
+import { insertEvidence, removeLastInsertedEvidence } from "./excelService";
+
+interface FakeShape {
+  name: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  isNullObject: boolean;
+  deleted?: boolean;
+  load: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+  lockAspectRatio?: boolean;
+  altTextTitle?: string;
+  altTextDescription?: string;
+}
+
+const scenario: ScenarioContext = {
+  worksheetName: "TS4.1.1",
+  scenarioId: "TS4.1.1",
+  condition: "Invoice and SOA",
+  expectedResult: "Expected",
+};
+
+const image: PendingImage = {
+  base64: "iVBORw0KGgo=",
+  mimeType: "image/png",
+  size: 100,
+  width: 800,
+  height: 1000,
+  previewUrl: "blob:test",
+};
+
+const createShape = (name: string, overrides: Partial<FakeShape> = {}): FakeShape => {
+  const shape: FakeShape = {
+    name,
+    left: 0,
+    top: 0,
+    width: 100,
+    height: 100,
+    isNullObject: false,
+    load: vi.fn(),
+    delete: vi.fn(() => {
+      shape.deleted = true;
+    }),
+    ...overrides,
+  };
+  return shape;
+};
+
+const createHost = () => {
+  const legacyShape = createShape("Picture 1", { left: 10, top: 100, width: 300, height: 400 });
+  const items: FakeShape[] = [legacyShape];
+  const statusRange = { values: [["ORIGINAL"]] };
+  const headingCells = new Map<string, {
+    values: string[][];
+    top: number;
+    load: ReturnType<typeof vi.fn>;
+    format: { fill: { color: string }; font: { bold: boolean; color: string } };
+  }>();
+  const shapes = {
+    items,
+    load: vi.fn(),
+    addImage: vi.fn(() => {
+      const shape = createShape("new-image");
+      items.push(shape);
+      return shape;
+    }),
+    addTextBox: vi.fn(() => {
+      const shape = createShape("new-text");
+      items.push(shape);
+      return shape;
+    }),
+    getItemOrNullObject: vi.fn((name: string) => {
+      const found = items.find((shape) => shape.name === name && !shape.deleted);
+      return found ?? createShape(name, { isNullObject: true });
+    }),
+  };
+  const ranges: Record<string, object> = {
+    "A1:D1": { left: 0, width: 400, load: vi.fn() },
+    "F1:I1": { left: 420, width: 400, load: vi.fn() },
+    D2: statusRange,
+  };
+  const sheet = {
+    shapes,
+    getRange: vi.fn((address: string) => ranges[address]),
+    getRangeByIndexes: vi.fn((rowIndex: number, columnIndex: number) => {
+      const key = `${rowIndex}:${columnIndex}`;
+      let cell = headingCells.get(key);
+      if (!cell) {
+        cell = {
+          values: [[""]],
+          top: rowIndex * 15,
+          load: vi.fn(),
+          format: { fill: { color: "" }, font: { bold: false, color: "" } },
+        };
+        headingCells.set(key, cell);
+      }
+      return cell;
+    }),
+    getUsedRangeOrNullObject: vi.fn(() => ({
+      top: 0,
+      height: 300,
+      isNullObject: false,
+      load: vi.fn(),
+    })),
+  };
+  const context = {
+    workbook: { worksheets: { getItem: vi.fn(() => sheet) } },
+    sync: vi.fn(async () => undefined),
+  };
+  vi.stubGlobal("Office", {});
+  vi.stubGlobal("Excel", { run: (callback: (value: typeof context) => unknown) => callback(context) });
+  return { items, legacyShape, statusRange, headingCells, addTextBox: shapes.addTextBox };
+};
+
+describe("Excel evidence service", () => {
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("inserts one safe managed image without touching legacy shape or status", async () => {
+    const host = createHost();
+    const originalLegacyGeometry = {
+      left: host.legacyShape.left,
+      top: host.legacyShape.top,
+      width: host.legacyShape.width,
+      height: host.legacyShape.height,
+    };
+
+    const name = await insertEvidence({
+      scenario,
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "Safe text =SUM(A1:A2)",
+      status: "UNCHANGED",
+    });
+
+    expect(name).toBe("EV__TS4_1_1__GENERIC_SCREENSHOT__001");
+    expect(host.items.some((shape) => shape.name === name && shape.top > 500)).toBe(true);
+    expect(host.statusRange.values).toEqual([["ORIGINAL"]]);
+    expect(host.legacyShape).toMatchObject(originalLegacyGeometry);
+    expect(host.legacyShape.delete).not.toHaveBeenCalled();
+    expect(host.addTextBox).not.toHaveBeenCalled();
+    const heading = [...host.headingCells.values()].find((cell) => cell.values[0][0] === "Evidence");
+    expect(heading).toBeDefined();
+    expect(heading?.format).toEqual({
+      fill: { color: "#D9D9D9" },
+      font: { bold: true, color: "#000000" },
+    });
+  });
+
+  it("pairs sequential PDF and AFP insertions and removes only latest managed image", async () => {
+    const host = createHost();
+    await insertEvidence({ scenario, moduleId: "PDF_PAPER", image, caption: "", status: "UNCHANGED" });
+    const firstPdfTop = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPER__001")!.top;
+    await insertEvidence({ scenario, moduleId: "AFP", image, caption: "", status: "UNCHANGED" });
+
+    const pdf = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPER__001")!;
+    const afp = host.items.find((shape) => shape.name === "EV__TS4_1_1__AFP__002")!;
+    expect(pdf.top).toBe(firstPdfTop);
+    expect(pdf.top).toBe(afp.top);
+    expect(pdf.left + pdf.width).toBeLessThan(afp.left);
+
+    const removed = await removeLastInsertedEvidence(scenario);
+    expect(removed).toBe(afp.name);
+    expect(afp.delete).toHaveBeenCalledOnce();
+    expect(pdf.delete).not.toHaveBeenCalled();
+    expect(host.legacyShape.delete).not.toHaveBeenCalled();
+  });
+
+  it("allows unlimited screenshots for one evidence type", async () => {
+    const host = createHost();
+    await insertEvidence({ scenario, moduleId: "INVOICING", image, caption: "", status: "UNCHANGED" });
+    await insertEvidence({ scenario, moduleId: "INVOICING", image, caption: "", status: "UNCHANGED" });
+
+    expect(host.items.filter((shape) => shape.name.startsWith("EV__TS4_1_1__INVOICING__"))).toHaveLength(2);
+  });
+});

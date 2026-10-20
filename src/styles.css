@@ -1,0 +1,87 @@
+:root {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #242424;
+  background: #f5f5f5;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 280px; }
+button, input, select { font: inherit; }
+
+.app-shell {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+h1 { font-size: 22px; line-height: 1.2; margin: 2px 0 0; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+.eyebrow { color: #0f6cbd; font-size: 12px; font-weight: 700; margin: 0; text-transform: uppercase; }
+
+.panel {
+  background: #fff;
+  border: 1px solid #d1d1d1;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.scenario-id { display: grid; grid-template-columns: 90px 1fr; margin: 0 0 8px; }
+.scenario-id dt { color: #616161; }
+.scenario-id dd { font-weight: 700; margin: 0; }
+details { border-top: 1px solid #e5e5e5; padding-top: 8px; margin-top: 8px; }
+summary { cursor: pointer; font-weight: 600; }
+.workbook-preview { margin: 8px 0 0; max-height: 132px; overflow: auto; white-space: pre-wrap; }
+
+.field { display: grid; gap: 4px; margin-bottom: 10px; }
+.field > span { font-size: 13px; font-weight: 600; }
+input[type="text"], select {
+  width: 100%;
+  border: 1px solid #8a8886;
+  border-radius: 4px;
+  min-height: 32px;
+  padding: 5px 8px;
+  background: #fff;
+}
+
+.paste-zone {
+  min-height: 150px;
+  border: 2px dashed #8a8886;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 10px;
+  text-align: center;
+}
+.paste-zone:focus { border-color: #0f6cbd; outline: 2px solid #c7e0f4; }
+.paste-zone.has-image { border-style: solid; }
+.paste-zone img { max-height: 220px; max-width: 100%; object-fit: contain; }
+.paste-zone p, .paste-zone span { color: #616161; margin: 0; font-size: 12px; }
+
+.actions { display: grid; gap: 8px; }
+.button { border: 1px solid transparent; border-radius: 4px; cursor: pointer; min-height: 34px; padding: 6px 12px; font-weight: 600; }
+.button:disabled { cursor: not-allowed; opacity: 0.55; }
+.button-primary { background: #0f6cbd; color: #fff; }
+.button-secondary { background: #fff; border-color: #8a8886; color: #242424; }
+.button-danger { background: #fff; border-color: #c50f1f; color: #a4262c; }
+
+.message { border-radius: 4px; padding: 9px; font-size: 13px; }
+.message-success { background: #dff6dd; color: #0e700e; }
+.message-error { background: #fde7e9; color: #a4262c; }
+.message-info { background: #f0f6fc; color: #0f548c; }
+
+@media (min-width: 520px) {
+  .actions { grid-template-columns: 1fr 1fr; }
+  .actions .button-secondary { grid-column: 1 / -1; }
+}
