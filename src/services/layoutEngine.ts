@@ -110,15 +110,33 @@ const buildEvidenceGroups = (
     images: images.filter((image) => moduleIds.includes(image.moduleId)),
   }));
 
-  const genericByCaption = new Map<string, LayoutImage[]>();
+  const genericGroups: Array<{ caption: string; images: LayoutImage[] }> = [];
+  const genericByCaption = new Map<string, { caption: string; images: LayoutImage[] }>();
+  let previousGenericGroup: { caption: string; images: LayoutImage[] } | undefined;
+  let unheadedGenericGroup: { caption: string; images: LayoutImage[] } | undefined;
   for (const image of [...images]
     .filter((candidate) => candidate.moduleId === "GENERIC_SCREENSHOT")
     .sort((a, b) => a.sequence - b.sequence)) {
-    const existing = genericByCaption.get(image.caption);
-    if (existing) existing.push(image);
-    else genericByCaption.set(image.caption, [image]);
+    if (image.caption === "") {
+      if (!previousGenericGroup) {
+        unheadedGenericGroup ??= { caption: "", images: [] };
+        if (!genericGroups.includes(unheadedGenericGroup)) genericGroups.push(unheadedGenericGroup);
+        previousGenericGroup = unheadedGenericGroup;
+      }
+      previousGenericGroup.images.push(image);
+      continue;
+    }
+
+    let targetGroup = genericByCaption.get(image.caption);
+    if (!targetGroup) {
+      targetGroup = { caption: image.caption, images: [] };
+      genericByCaption.set(image.caption, targetGroup);
+      genericGroups.push(targetGroup);
+    }
+    targetGroup.images.push(image);
+    previousGenericGroup = targetGroup;
   }
-  for (const [caption, genericImages] of genericByCaption) {
+  for (const { caption, images: genericImages } of genericGroups) {
     groups.push({
       key: `GENERIC_SCREENSHOT:${genericImages[0].sequence}`,
       moduleIds: ["GENERIC_SCREENSHOT"],
@@ -161,10 +179,11 @@ export const buildLayout = ({
     if (rowCount === 0) continue;
 
     const headingTop = cursorTop;
-    const visibleHeadingModules = group.moduleIds.filter(
-      (moduleId) =>
-        EVIDENCE_MODULES[moduleId].showHeading && (byModule.get(moduleId)?.length ?? 0) > 0,
-    );
+    const visibleHeadingModules = group.moduleIds.filter((moduleId) => {
+      if ((byModule.get(moduleId)?.length ?? 0) === 0) return false;
+      if (moduleId === "GENERIC_SCREENSHOT") return group.genericHeading !== "";
+      return EVIDENCE_MODULES[moduleId].showHeading;
+    });
     for (const moduleId of visibleHeadingModules) {
       const definition = EVIDENCE_MODULES[moduleId];
       const anchor = anchorFor(anchors, definition.placement);

@@ -146,7 +146,7 @@ describe("buildLayout", () => {
     expect(plan.headings.map((heading) => heading.text)).toEqual(captions);
   });
 
-  it("groups empty Generic captions under an empty heading", () => {
+  it("uses no heading when empty Generic captions have no previous group", () => {
     const plan = buildLayout({
       selectedModules: ["GENERIC_SCREENSHOT"],
       images: [
@@ -157,7 +157,40 @@ describe("buildLayout", () => {
       requestedBaseTop: 0,
       obstacles: [],
     });
-    expect(plan.headings).toHaveLength(1);
-    expect(plan.headings[0].text).toBe("");
+    expect(plan.headings).toHaveLength(0);
+    expect(plan.images[0].groupKey).toBe(plan.images[1].groupKey);
+  });
+
+  it("appends empty Generic captions to the previous Generic group", () => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT"],
+      images: [
+        { name: "named", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "Login" },
+        { name: "blank", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 200, caption: "" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+    expect(plan.headings.map((heading) => heading.text)).toEqual(["Login"]);
+    expect(plan.images[0].groupKey).toBe(plan.images[1].groupKey);
+    expect(plan.images[1].top).toBeGreaterThan(plan.images[0].top + plan.images[0].height);
+  });
+
+  it("appends empty Generic captions to the most recently used exact group", () => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT"],
+      images: [
+        { name: "a", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "A" },
+        { name: "b", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 200, caption: "B" },
+        { name: "blank", moduleId: "GENERIC_SCREENSHOT", sequence: 3, naturalWidth: 400, naturalHeight: 200, caption: "" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+    const b = plan.images.find((image) => image.name === "b")!;
+    const blank = plan.images.find((image) => image.name === "blank")!;
+    expect(blank.groupKey).toBe(b.groupKey);
   });
 });

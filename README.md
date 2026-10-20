@@ -135,7 +135,8 @@ Generic Screenshot groups use exact Header matching:
 
 - Same exact text shares one gray heading cell
 - Capitalization and whitespace differences create separate groups
-- Empty values share one empty heading group
+- Empty values add to most recently used Generic group without creating a header
+- Empty value with no previous Generic group creates an unheaded group
 - Matching images stack vertically without screenshot-count limits
 
 ## Test

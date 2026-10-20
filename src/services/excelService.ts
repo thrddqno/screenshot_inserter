@@ -416,17 +416,19 @@ export const removeLastInsertedEvidence = async (scenario: ScenarioContext): Pro
       latest.shape.altTextDescription ?? "",
       latest.parsed.moduleId,
     );
-    const matchingGroupRemains = candidates.slice(1).some((candidate) => {
-      if (!candidate.parsed) return false;
-      if (candidate.parsed.moduleId !== latest.parsed!.moduleId) return false;
-      if (latest.parsed!.moduleId !== "GENERIC_SCREENSHOT") return true;
-      return (
-        parseManagedMetadata(
-          candidate.shape.altTextDescription ?? "",
-          candidate.parsed.moduleId,
-        ).caption === latestMetadata.caption
-      );
-    });
+    const matchingGroupRemains = latestMetadata.heading
+      ? candidates.slice(1).some((candidate) => {
+          if (!candidate.parsed) return false;
+          const metadata = parseManagedMetadata(
+            candidate.shape.altTextDescription ?? "",
+            candidate.parsed.moduleId,
+          );
+          return (
+            metadata.heading?.address === latestMetadata.heading?.address &&
+            metadata.heading?.text === latestMetadata.heading?.text
+          );
+        })
+      : false;
     const headingRange =
       !matchingGroupRemains && latestMetadata.heading
         ? sheet.getRange(latestMetadata.heading.address)

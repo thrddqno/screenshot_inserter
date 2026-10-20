@@ -249,6 +249,31 @@ describe("Excel evidence service", () => {
     expect(heading?.format.fill.color).toBe("");
   });
 
+  it("keeps previous Generic heading when removing an empty-header screenshot", async () => {
+    const host = createHost();
+    await insertEvidence({
+      scenario,
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "Dynamic Header",
+      status: "UNCHANGED",
+    });
+    await insertEvidence({
+      scenario,
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "",
+      status: "UNCHANGED",
+    });
+    const heading = [...host.headingCells.values()].find(
+      (cell) => cell.values[0][0] === "Dynamic Header",
+    );
+
+    await removeLastInsertedEvidence(scenario);
+    expect(heading?.values).toEqual([["Dynamic Header"]]);
+    expect(heading?.format.fill.color).toBe("#D9D9D9");
+  });
+
   it("ignores captions for non-generic evidence", async () => {
     const host = createHost();
     const name = await insertEvidence({
