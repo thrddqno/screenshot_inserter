@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ALL_MODULES } from "./config/evidenceModules";
 import { IMAGE_LIMITS } from "./config/layoutProfiles";
 import {
@@ -6,6 +6,7 @@ import {
   isOfficeHostAvailable,
   readCurrentScenario,
   removeLastInsertedEvidence,
+  subscribeWorksheetActivated,
 } from "./services/excelService";
 import { getImageFromClipboard, ImageValidationError } from "./services/imageValidation";
 import type {
@@ -26,33 +27,83 @@ export default function App() {
   const [caption, setCaption] = useState("");
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const [status, setStatus] = useState<EvidenceStatus>("UNCHANGED");
-  const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [operationBusy, setOperationBusy] = useState(false);
   const [message, setMessage] = useState<Message>(null);
+  const mountedRef = useRef(false);
+  const refreshRunningRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
+  const refreshGenerationRef = useRef(0);
 
-  const refreshScenario = useCallback(async () => {
-    setBusy(true);
-    setMessage({ kind: "info", text: "Reading workbook…" });
-    try {
-      const nextScenario = await readCurrentScenario();
-      setScenario(nextScenario);
+  const refreshScenario = useCallback(async (invalidateImmediately = false) => {
+    refreshGenerationRef.current += 1;
+    refreshQueuedRef.current = true;
+    if (invalidateImmediately && mountedRef.current) {
+      setScenario(null);
       setEvidenceType("GENERIC_SCREENSHOT");
       setCaption("");
-      setMessage({ kind: "success", text: `Loaded ${nextScenario.scenarioId}.` });
-    } catch (error) {
-      setScenario(null);
-      setMessage({ kind: "error", text: errorMessage(error) });
+      setMessage({ kind: "info", text: "Reading workbook…" });
+    }
+    if (refreshRunningRef.current) return;
+
+    refreshRunningRef.current = true;
+    if (mountedRef.current) setRefreshing(true);
+    try {
+      while (refreshQueuedRef.current) {
+        refreshQueuedRef.current = false;
+        const generation = refreshGenerationRef.current;
+        if (mountedRef.current) setMessage({ kind: "info", text: "Reading workbook…" });
+        try {
+          const nextScenario = await readCurrentScenario();
+          if (!mountedRef.current || generation !== refreshGenerationRef.current) continue;
+          setScenario(nextScenario);
+          setEvidenceType("GENERIC_SCREENSHOT");
+          setCaption("");
+          setMessage({ kind: "success", text: `Loaded ${nextScenario.scenarioId}.` });
+        } catch (error) {
+          if (!mountedRef.current || generation !== refreshGenerationRef.current) continue;
+          setScenario(null);
+          setMessage({ kind: "error", text: errorMessage(error) });
+        }
+      }
     } finally {
-      setBusy(false);
+      refreshRunningRef.current = false;
+      if (mountedRef.current) setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    if (isOfficeHostAvailable()) void refreshScenario();
-    else setMessage({ kind: "error", text: "Open this page inside an Excel task pane." });
+    mountedRef.current = true;
+    let disposed = false;
+    let unsubscribe: (() => Promise<void>) | undefined;
+
+    if (isOfficeHostAvailable()) {
+      void refreshScenario();
+      void subscribeWorksheetActivated(async () => {
+        if (!disposed) await refreshScenario(true);
+      })
+        .then((removeHandler) => {
+          if (disposed) void removeHandler().catch(() => undefined);
+          else unsubscribe = removeHandler;
+        })
+        .catch(() => {
+          if (!disposed && mountedRef.current) {
+            setMessage({ kind: "info", text: "Automatic sheet refresh unavailable. Use Refresh." });
+          }
+        });
+    } else {
+      setMessage({ kind: "error", text: "Open this page inside an Excel task pane." });
+    }
+
+    return () => {
+      disposed = true;
+      mountedRef.current = false;
+      if (unsubscribe) void unsubscribe().catch(() => undefined);
+    };
   }, [refreshScenario]);
 
   const acceptClipboard = useCallback(async (clipboardData: DataTransfer | null) => {
-    setBusy(true);
+    setOperationBusy(true);
     try {
       const image = await getImageFromClipboard(clipboardData);
       setPendingImage((current) => {
@@ -67,7 +118,7 @@ export default function App() {
       const text = error instanceof ImageValidationError ? error.message : errorMessage(error);
       setMessage({ kind: "error", text });
     } finally {
-      setBusy(false);
+      setOperationBusy(false);
     }
   }, []);
 
@@ -101,7 +152,7 @@ export default function App() {
 
   const handleInsert = async () => {
     if (!scenario || !pendingImage) return;
-    setBusy(true);
+    setOperationBusy(true);
     try {
       const name = await insertEvidence({
         scenario,
@@ -117,22 +168,24 @@ export default function App() {
     } catch (error) {
       setMessage({ kind: "error", text: errorMessage(error) });
     } finally {
-      setBusy(false);
+      setOperationBusy(false);
     }
   };
 
   const handleRemove = async () => {
     if (!scenario) return;
-    setBusy(true);
+    setOperationBusy(true);
     try {
       const name = await removeLastInsertedEvidence(scenario);
       setMessage({ kind: "success", text: `Removed ${name}.` });
     } catch (error) {
       setMessage({ kind: "error", text: errorMessage(error) });
     } finally {
-      setBusy(false);
+      setOperationBusy(false);
     }
   };
+
+  const busy = refreshing || operationBusy;
 
   return (
     <main className="app-shell">
@@ -141,7 +194,7 @@ export default function App() {
           <p className="eyebrow">Excel evidence organizer</p>
           <h1>Test Evidence Inserter</h1>
         </div>
-        <button className="button button-secondary" type="button" onClick={() => void refreshScenario()} disabled={busy}>
+        <button className="button button-secondary" type="button" onClick={() => void refreshScenario(true)} disabled={busy}>
           Refresh
         </button>
       </header>

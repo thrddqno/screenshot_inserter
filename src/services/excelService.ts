@@ -89,6 +89,29 @@ const toMessage = (error: unknown): string => {
 export const isOfficeHostAvailable = (): boolean =>
   typeof Office !== "undefined" && typeof Excel !== "undefined";
 
+export type WorksheetActivatedHandler = (event: Excel.WorksheetActivatedEventArgs) => Promise<void>;
+
+export const subscribeWorksheetActivated = async (
+  handler: WorksheetActivatedHandler,
+): Promise<() => Promise<void>> => {
+  if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
+
+  await Excel.run(async (context) => {
+    context.workbook.worksheets.onActivated.add(handler);
+    await context.sync();
+  });
+
+  let removed = false;
+  return async () => {
+    if (removed || !isOfficeHostAvailable()) return;
+    removed = true;
+    await Excel.run(async (context) => {
+      context.workbook.worksheets.onActivated.remove(handler);
+      await context.sync();
+    });
+  };
+};
+
 export const readCurrentScenario = async (): Promise<ScenarioContext> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Open this page inside an Excel task pane.");
 

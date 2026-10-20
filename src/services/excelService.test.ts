@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PendingImage, ScenarioContext } from "../types/evidence";
-import { insertEvidence, removeLastInsertedEvidence, toLiteralCellFormula } from "./excelService";
+import {
+  insertEvidence,
+  removeLastInsertedEvidence,
+  subscribeWorksheetActivated,
+  toLiteralCellFormula,
+} from "./excelService";
 
 interface FakeShape {
   name: string;
@@ -143,6 +148,29 @@ const createHost = () => {
 describe("Excel evidence service", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.unstubAllGlobals());
+
+  it("registers and removes worksheet activation handler with same identity", async () => {
+    const add = vi.fn();
+    const remove = vi.fn();
+    const sync = vi.fn(async () => undefined);
+    const context = {
+      workbook: { worksheets: { onActivated: { add, remove } } },
+      sync,
+    };
+    vi.stubGlobal("Office", {});
+    vi.stubGlobal("Excel", {
+      run: (callback: (value: typeof context) => unknown) => callback(context),
+    });
+    const handler = vi.fn(async () => undefined);
+
+    const unsubscribe = await subscribeWorksheetActivated(handler);
+    expect(add).toHaveBeenCalledWith(handler);
+    await unsubscribe();
+    await unsubscribe();
+    expect(remove).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledWith(handler);
+    expect(sync).toHaveBeenCalledTimes(2);
+  });
 
   it("inserts one safe managed image without touching legacy shape or status", async () => {
     const host = createHost();
