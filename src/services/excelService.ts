@@ -86,6 +86,12 @@ const legacyManagedMetadata = (
     caption: moduleId === "GENERIC_SCREENSHOT" ? description.slice(0, CAPTION_MAXIMUM_LENGTH) : "",
   });
 
+const hasManagedHeading = (moduleId: ModuleId, metadata: ManagedShapeMetadata): boolean => {
+  if (metadata.heading) return true;
+  if (moduleId === "GENERIC_SCREENSHOT") return metadata.caption !== "";
+  return EVIDENCE_MODULES[moduleId].showHeading;
+};
+
 export const toLiteralCellFormula = (value: string): string => (value === "" ? "" : `'${value}`);
 
 export class ExcelServiceError extends Error {
@@ -270,7 +276,7 @@ export const insertEvidence = async ({
         modulesWithImages.add(parsed.moduleId);
         existingManagedBases.push(
           shape.top -
-            (EVIDENCE_MODULES[parsed.moduleId].showHeading
+            (hasManagedHeading(parsed.moduleId, metadata)
               ? LAYOUT_CONFIG.headingHeight + LAYOUT_CONFIG.headingGap
               : 0),
         );
@@ -335,6 +341,38 @@ export const insertEvidence = async ({
       }));
       previousHeadingRanges.forEach(({ range }) => range.load("values"));
       if (previousHeadingRanges.length > 0) await context.sync();
+
+      const headingRows = new Map<number, number>();
+      const headingByGroupAndModule = new Map<string, ManagedHeadingMetadata>();
+      const pendingHeadings: Array<{
+        heading: (typeof plan.headings)[number];
+        cell: Excel.Range;
+        address: string;
+      }> = [];
+      for (const heading of plan.headings) {
+        let rowIndex = headingRows.get(heading.top);
+        if (rowIndex === undefined) {
+          rowIndex = await resolveRowAtTop(context, sheet, heading.top);
+          headingRows.set(heading.top, rowIndex);
+        }
+        const definition = EVIDENCE_MODULES[heading.moduleId];
+        const columnIndex = definition.placement === "right" ? 5 : 0;
+        const cell = sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1);
+        const address = `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
+        cell.load("values");
+        pendingHeadings.push({ heading, cell, address });
+      }
+      if (pendingHeadings.length > 0) await context.sync();
+
+      for (const { cell, address } of pendingHeadings) {
+        const value = cell.values[0]?.[0];
+        const previousHeading = previousHeadings.get(address);
+        const isOwnedHeading = previousHeading && value === previousHeading.text;
+        if (value !== "" && value != null && !isOwnedHeading) {
+          throw new ExcelServiceError(`Heading cell ${address} contains user content.`);
+        }
+      }
+
       for (const { heading, range } of previousHeadingRanges) {
         if (range.values[0]?.[0] === heading.text) range.clear("All");
       }
@@ -354,22 +392,11 @@ export const insertEvidence = async ({
         }
       }
 
-      const headingRows = new Map<number, number>();
-      const headingByGroupAndModule = new Map<string, ManagedHeadingMetadata>();
-      for (const heading of plan.headings) {
-        let rowIndex = headingRows.get(heading.top);
-        if (rowIndex === undefined) {
-          rowIndex = await resolveRowAtTop(context, sheet, heading.top);
-          headingRows.set(heading.top, rowIndex);
-        }
-        const definition = EVIDENCE_MODULES[heading.moduleId];
-        const columnIndex = definition.placement === "right" ? 5 : 0;
-        const cell = sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1);
+      for (const { heading, cell, address } of pendingHeadings) {
         cell.formulas = [[toLiteralCellFormula(heading.text)]];
         cell.format.fill.color = LAYOUT_CONFIG.headingFillColor;
         cell.format.font.bold = true;
         cell.format.font.color = LAYOUT_CONFIG.headingFontColor;
-        const address = `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
         headingByGroupAndModule.set(`${heading.groupKey}|${heading.moduleId}`, {
           address,
           text: heading.text,

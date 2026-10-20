@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PendingImage, ScenarioContext } from "../types/evidence";
+import type { ModuleId, PendingImage, ScenarioContext } from "../types/evidence";
 import {
   insertEvidence,
   removeLastInsertedEvidence,
@@ -261,6 +261,166 @@ describe("Excel evidence service", () => {
     await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "INVOICING", image, caption: "", status: "UNCHANGED" });
 
     expect(host.items.filter((shape) => shape.name.startsWith("EV__TS4_1_1__INVOICING__"))).toHaveLength(2);
+  });
+
+  it("keeps blank-header Generic group fixed after repeated insertions", async () => {
+    const host = createHost();
+    const tallImage = { ...image, width: 300, height: 1200 };
+    const insertBlank = () =>
+      insertEvidence({
+        scenario,
+        testTypeId: "SOA",
+        moduleId: "GENERIC_SCREENSHOT",
+        image: tallImage,
+        caption: "",
+        status: "UNCHANGED",
+      });
+
+    const firstName = await insertBlank();
+    const first = host.items.find((shape) => shape.name === firstName)!;
+    const originalTop = first.top;
+    await insertBlank();
+    await insertBlank();
+
+    expect(first.top).toBe(originalTop);
+    expect(first).toMatchObject({ width: 400, height: 1600 });
+    expect(first.top).toBeGreaterThanOrEqual(host.legacyShape.top + host.legacyShape.height);
+  });
+
+  it("keeps headed Generic group fixed for matching and blank headers", async () => {
+    const host = createHost();
+    const firstName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "Dynamic Header",
+      status: "UNCHANGED",
+    });
+    const first = host.items.find((shape) => shape.name === firstName)!;
+    const originalTop = first.top;
+
+    await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "Dynamic Header",
+      status: "UNCHANGED",
+    });
+    await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "",
+      status: "UNCHANGED",
+    });
+
+    expect(first.top).toBe(originalTop);
+  });
+
+  it.each<ModuleId>([
+    "INVOICING",
+    "SOA_BATCH",
+    "SOA_BATCH_PAPERPLUS",
+    "STATEMENT_DUPLICATE",
+    "RETAILER_STATEMENT_DUPLICATE",
+    "MCD",
+    "PDF_PAPER",
+    "AFP",
+    "PDF_PAPERPLUS",
+    "AFP_PAPERPLUS",
+  ])("keeps repeated %s evidence fixed", async (moduleId) => {
+    const host = createHost();
+    const firstName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId,
+      image,
+      caption: "",
+      status: "UNCHANGED",
+    });
+    const first = host.items.find((shape) => shape.name === firstName)!;
+    const originalTop = first.top;
+
+    await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId,
+      image,
+      caption: "",
+      status: "UNCHANGED",
+    });
+
+    expect(first.top).toBe(originalTop);
+  });
+
+  it.each<[ModuleId, ModuleId]>([
+    ["SOA_BATCH", "SOA_BATCH_PAPERPLUS"],
+    ["SOA_BATCH_PAPERPLUS", "SOA_BATCH"],
+    ["PDF_PAPER", "AFP"],
+    ["AFP", "PDF_PAPER"],
+    ["PDF_PAPERPLUS", "AFP_PAPERPLUS"],
+    ["AFP_PAPERPLUS", "PDF_PAPERPLUS"],
+  ])("keeps %s fixed when paired with %s", async (firstModule, secondModule) => {
+    const host = createHost();
+    const firstName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: firstModule,
+      image,
+      caption: "",
+      status: "UNCHANGED",
+    });
+    const first = host.items.find((shape) => shape.name === firstName)!;
+    const originalTop = first.top;
+
+    await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: secondModule,
+      image,
+      caption: "",
+      status: "UNCHANGED",
+    });
+
+    expect(first.top).toBe(originalTop);
+  });
+
+  it("refuses to overwrite user content in a managed heading cell", async () => {
+    const host = createHost();
+    await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "INVOICING",
+      image,
+      caption: "",
+      status: "UNCHANGED",
+    });
+    const heading = [...host.headingCells.values()].find(
+      (cell) => cell.values[0][0] === "Invoicing",
+    )!;
+    heading.values = [["User-owned note"]];
+    heading.format = { fill: { color: "#FFFF00" }, font: { bold: false, color: "#123456" } };
+
+    await expect(
+      insertEvidence({
+        scenario,
+        testTypeId: "SOA",
+        moduleId: "INVOICING",
+        image,
+        caption: "",
+        status: "UNCHANGED",
+      }),
+    ).rejects.toThrow("contains user content");
+
+    expect(heading.values).toEqual([["User-owned note"]]);
+    expect(heading.format).toEqual({
+      fill: { color: "#FFFF00" },
+      font: { bold: false, color: "#123456" },
+    });
+    expect(host.items.filter((shape) => shape.name.startsWith("EV__TS4_1_1__INVOICING__"))).toHaveLength(1);
   });
 
   it("removes dynamic heading when its last Generic Screenshot is removed", async () => {

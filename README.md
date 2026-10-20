@@ -180,6 +180,7 @@ npm run build
 - Screenshot Base64 held only in memory
 - No screenshot upload, backend, local storage, or credentials
 - Existing shapes excluded from deletion unless name exactly matches managed pattern
+- Heading writes stop when target cell contains user-owned content
 - HTTPS required in development and production
 
 ## GitHub Pages deployment
