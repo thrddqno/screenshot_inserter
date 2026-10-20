@@ -13,6 +13,66 @@ import {
 
 const STATUS_VALUES = new Set<EvidenceStatus>(["UNCHANGED", "PASS", "FAIL", "BLOCKED"]);
 const CAPTION_MAXIMUM_LENGTH = 500;
+const MANAGED_METADATA_VERSION = 1;
+
+interface ManagedHeadingMetadata {
+  address: string;
+  text: string;
+}
+
+interface ManagedShapeMetadata {
+  version: number;
+  caption: string;
+  heading?: ManagedHeadingMetadata;
+}
+
+const isManagedHeadingAddress = (value: unknown): value is string => {
+  if (typeof value !== "string") return false;
+  const match = /^[AF]([1-9]\d{0,6})$/.exec(value);
+  return Boolean(match && Number(match[1]) <= 1_048_576);
+};
+
+const parseManagedMetadata = (
+  description: string,
+  moduleId: ModuleId,
+): ManagedShapeMetadata => {
+  if (description.length > 2_000) {
+    return {
+      version: MANAGED_METADATA_VERSION,
+      caption:
+        moduleId === "GENERIC_SCREENSHOT" ? description.slice(0, CAPTION_MAXIMUM_LENGTH) : "",
+    };
+  }
+  try {
+    const value = JSON.parse(description) as Partial<ManagedShapeMetadata>;
+    if (
+      value.version === MANAGED_METADATA_VERSION &&
+      typeof value.caption === "string" &&
+      value.caption.length <= CAPTION_MAXIMUM_LENGTH
+    ) {
+      const heading = value.heading;
+      return {
+        version: MANAGED_METADATA_VERSION,
+        caption: moduleId === "GENERIC_SCREENSHOT" ? value.caption : "",
+        heading:
+          heading &&
+          isManagedHeadingAddress(heading.address) &&
+          typeof heading.text === "string" &&
+          heading.text.length <= CAPTION_MAXIMUM_LENGTH
+            ? { address: heading.address, text: heading.text }
+            : undefined,
+      };
+    }
+  } catch {
+    // Older add-in versions stored a plain caption in alt text.
+  }
+  return {
+    version: MANAGED_METADATA_VERSION,
+    caption: moduleId === "GENERIC_SCREENSHOT" ? description.slice(0, CAPTION_MAXIMUM_LENGTH) : "",
+  };
+};
+
+export const toLiteralCellFormula = (value: string): string => (value === "" ? "" : `'${value}`);
 
 export class ExcelServiceError extends Error {
   constructor(message: string) {
@@ -127,7 +187,8 @@ export const insertEvidence = async ({
 }: InsertEvidenceInput): Promise<string> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
   if (!STATUS_VALUES.has(status)) throw new ExcelServiceError("Invalid status value.");
-  if (caption.length > CAPTION_MAXIMUM_LENGTH) {
+  const effectiveCaption = moduleId === "GENERIC_SCREENSHOT" ? caption : "";
+  if (effectiveCaption.length > CAPTION_MAXIMUM_LENGTH) {
     throw new ExcelServiceError(`Caption exceeds ${CAPTION_MAXIMUM_LENGTH} characters.`);
   }
 
@@ -142,7 +203,7 @@ export const insertEvidence = async ({
       const fullRange = sheet.getRange(LAYOUT_CONFIG.fullAnchorRange);
       const usedRange = sheet.getUsedRangeOrNullObject(true);
 
-      shapes.load("items/name,items/left,items/top,items/width,items/height");
+      shapes.load("items/name,items/left,items/top,items/width,items/height,items/altTextDescription");
       leftRange.load("left,width");
       rightRange.load("left,width");
       fullRange.load("left,width");
@@ -154,13 +215,15 @@ export const insertEvidence = async ({
       const sequence = nextEvidenceSequence(existingNames, targetScenarioKey);
       createdImageName = imageShapeName(scenario.scenarioId, moduleId, sequence);
 
-      const captionNames = new Set(existingNames.filter((name) => name.startsWith(`EVC__${targetScenarioKey}__`)));
       const layoutImages: LayoutImage[] = [];
+      const metadataByName = new Map<string, ManagedShapeMetadata>();
       const existingManagedBases: number[] = [];
       const modulesWithImages = new Set<ModuleId>();
       for (const shape of shapes.items) {
         const parsed = parseImageShapeName(shape.name);
         if (parsed?.scenarioKey !== targetScenarioKey) continue;
+        const metadata = parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId);
+        metadataByName.set(shape.name, metadata);
         modulesWithImages.add(parsed.moduleId);
         existingManagedBases.push(
           shape.top -
@@ -174,7 +237,7 @@ export const insertEvidence = async ({
           sequence: parsed.sequence,
           naturalWidth: shape.width,
           naturalHeight: shape.height,
-          hasCaption: captionNames.has(captionShapeName(scenario.scenarioId, parsed.moduleId, parsed.sequence)),
+          caption: metadata.caption,
         });
       }
 
@@ -184,7 +247,11 @@ export const insertEvidence = async ({
         sequence,
         naturalWidth: image.width * 0.75,
         naturalHeight: image.height * 0.75,
-        hasCaption: false,
+        caption: effectiveCaption,
+      });
+      metadataByName.set(createdImageName, {
+        version: MANAGED_METADATA_VERSION,
+        caption: effectiveCaption,
       });
       modulesWithImages.add(moduleId);
 
@@ -207,17 +274,37 @@ export const insertEvidence = async ({
       });
 
       const shapeByName = new Map(shapes.items.map((shape) => [shape.name, shape]));
+
+      const previousHeadings = new Map<string, ManagedHeadingMetadata>();
+      for (const metadata of metadataByName.values()) {
+        if (metadata.heading) previousHeadings.set(metadata.heading.address, metadata.heading);
+      }
+      const previousHeadingRanges = [...previousHeadings.values()].map((heading) => ({
+        heading,
+        range: sheet.getRange(heading.address),
+      }));
+      previousHeadingRanges.forEach(({ range }) => range.load("values"));
+      if (previousHeadingRanges.length > 0) await context.sync();
+      for (const { heading, range } of previousHeadingRanges) {
+        if (range.values[0]?.[0] === heading.text) range.clear("All");
+      }
+
       const newImage = shapes.addImage(image.base64);
       newImage.name = createdImageName;
       newImage.altTextTitle = EVIDENCE_MODULES[moduleId].displayName;
-      newImage.altTextDescription = caption.trim().slice(0, CAPTION_MAXIMUM_LENGTH);
       shapeByName.set(createdImageName, newImage);
 
       for (const shape of shapes.items) {
-        if (shape.name.startsWith(`EVH__${targetScenarioKey}__`)) shape.delete();
+        if (
+          shape.name.startsWith(`EVH__${targetScenarioKey}__`) ||
+          shape.name.startsWith(`EVC__${targetScenarioKey}__`)
+        ) {
+          shape.delete();
+        }
       }
 
       const headingRows = new Map<number, number>();
+      const headingByGroupAndModule = new Map<string, ManagedHeadingMetadata>();
       for (const heading of plan.headings) {
         let rowIndex = headingRows.get(heading.top);
         if (rowIndex === undefined) {
@@ -227,23 +314,29 @@ export const insertEvidence = async ({
         const definition = EVIDENCE_MODULES[heading.moduleId];
         const columnIndex = definition.placement === "right" ? 5 : 0;
         const cell = sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1);
-        cell.values = [[definition.headingText]];
+        cell.formulas = [[toLiteralCellFormula(heading.text)]];
         cell.format.fill.color = LAYOUT_CONFIG.headingFillColor;
         cell.format.font.bold = true;
         cell.format.font.color = LAYOUT_CONFIG.headingFontColor;
+        const address = `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
+        headingByGroupAndModule.set(`${heading.groupKey}|${heading.moduleId}`, {
+          address,
+          text: heading.text,
+        });
       }
 
+      const imageByName = new Map(layoutImages.map((layoutImage) => [layoutImage.name, layoutImage]));
       for (const placement of plan.images) {
         const shape = shapeByName.get(placement.name);
         if (!shape) throw new ExcelServiceError(`Managed image "${placement.name}" is missing.`);
         shape.lockAspectRatio = true;
         setShapeRectangle(shape, placement);
-        const parsed = parseImageShapeName(placement.name);
-        if (placement.caption && parsed) {
-          const captionName = captionShapeName(scenario.scenarioId, parsed.moduleId, parsed.sequence);
-          const captionShape = shapeByName.get(captionName);
-          if (captionShape) setShapeRectangle(captionShape, placement.caption);
-        }
+        const layoutImage = imageByName.get(placement.name);
+        shape.altTextDescription = JSON.stringify({
+          version: MANAGED_METADATA_VERSION,
+          caption: layoutImage?.caption ?? "",
+          heading: headingByGroupAndModule.get(`${placement.groupKey}|${placement.moduleId}`),
+        } satisfies ManagedShapeMetadata);
       }
 
       if (status !== "UNCHANGED") {
@@ -278,7 +371,7 @@ export const removeLastInsertedEvidence = async (scenario: ScenarioContext): Pro
   return Excel.run(async (context) => {
     const sheet = context.workbook.worksheets.getItem(scenario.worksheetName);
     const shapes = sheet.shapes;
-    shapes.load("items/name");
+    shapes.load("items/name,items/altTextDescription");
     await context.sync();
 
     const targetScenarioKey = scenarioKey(scenario.scenarioId);
@@ -296,10 +389,37 @@ export const removeLastInsertedEvidence = async (scenario: ScenarioContext): Pro
     );
     const captionShape = shapes.getItemOrNullObject(captionName);
     captionShape.load("name");
+    const latestMetadata = parseManagedMetadata(
+      latest.shape.altTextDescription ?? "",
+      latest.parsed.moduleId,
+    );
+    const matchingGroupRemains = candidates.slice(1).some((candidate) => {
+      if (!candidate.parsed) return false;
+      if (candidate.parsed.moduleId !== latest.parsed!.moduleId) return false;
+      if (latest.parsed!.moduleId !== "GENERIC_SCREENSHOT") return true;
+      return (
+        parseManagedMetadata(
+          candidate.shape.altTextDescription ?? "",
+          candidate.parsed.moduleId,
+        ).caption === latestMetadata.caption
+      );
+    });
+    const headingRange =
+      !matchingGroupRemains && latestMetadata.heading
+        ? sheet.getRange(latestMetadata.heading.address)
+        : undefined;
+    headingRange?.load("values");
     await context.sync();
 
     latest.shape.delete();
     if (!captionShape.isNullObject) captionShape.delete();
+    if (
+      headingRange &&
+      latestMetadata.heading &&
+      headingRange.values[0]?.[0] === latestMetadata.heading.text
+    ) {
+      headingRange.clear("All");
+    }
     await context.sync();
     return latest.shape.name;
   }).catch((error: unknown) => {

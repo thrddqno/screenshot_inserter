@@ -104,7 +104,7 @@ Some Microsoft 365 builds also expose **Upload My Add-in** directly.
 1. Open scenario sheet, or select scenario row on `Summary`.
 2. Select **Refresh**.
 3. Choose Evidence Type.
-4. Optionally enter caption.
+4. For Generic Screenshot, optionally enter dynamic Header.
 5. Focus task pane and press `Ctrl+V` after Windows Snipping Tool capture.
 6. Leave Status as `unchanged` unless explicit update is intended.
 7. Select **Insert Evidence**.
@@ -127,7 +127,14 @@ New evidence headings use worksheet cells, not shapes:
 - Gray fill, bold black text
 - Images fit left `A:D` or right `F:I` slot
 - MCD and Statement Duplicate intentionally have no heading
-- Captions remain non-visible image alt text
+- Header input appears only for Generic Screenshot
+
+Generic Screenshot groups use exact Header matching:
+
+- Same exact text shares one gray heading cell
+- Capitalization and whitespace differences create separate groups
+- Empty values share one empty heading group
+- Matching images stack vertically without screenshot-count limits
 
 ## Test
 
@@ -160,7 +167,8 @@ npm run build
 - 10 MB maximum before Base64 conversion
 - Browser decode validates image content and dimensions
 - Workbook text rendered as React text, never raw `innerHTML`
-- Caption stored only as image alt text, never cell formula or visible shape
+- Generic Header text is escaped before writing to a cell; formula injection is blocked
+- Non-generic evidence accepts no caption/header input
 - Status constrained to static allowlist
 - Screenshot Base64 held only in memory
 - No screenshot upload, backend, local storage, or credentials

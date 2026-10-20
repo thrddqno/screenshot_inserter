@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
@@ -16,6 +16,9 @@ describe("task pane", () => {
     const evidenceType = screen.getByLabelText("Evidence Type");
     expect(evidenceType).toContainHTML("Retailer Statement Duplicate");
     expect(screen.getByRole("option", { name: "PDF" })).toBeVisible();
+    expect(screen.getByLabelText("Header")).toBeVisible();
+    fireEvent.change(evidenceType, { target: { value: "PDF_PAPER" } });
+    expect(screen.queryByLabelText("Header")).not.toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("Open this page inside an Excel task pane.");
   });
 });

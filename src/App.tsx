@@ -36,6 +36,7 @@ export default function App() {
       const nextScenario = await readCurrentScenario();
       setScenario(nextScenario);
       setEvidenceType("GENERIC_SCREENSHOT");
+      setCaption("");
       setMessage({ kind: "success", text: `Loaded ${nextScenario.scenarioId}.` });
     } catch (error) {
       setScenario(null);
@@ -106,7 +107,7 @@ export default function App() {
         scenario,
         moduleId: evidenceType,
         image: pendingImage,
-        caption,
+        caption: evidenceType === "GENERIC_SCREENSHOT" ? caption : "",
         status,
       });
       URL.revokeObjectURL(pendingImage.previewUrl);
@@ -167,21 +168,27 @@ export default function App() {
           <span>Evidence Type</span>
           <select
             value={evidenceType}
-            onChange={(event) => setEvidenceType(event.target.value as ModuleId)}
+            onChange={(event) => {
+              const nextType = event.target.value as ModuleId;
+              setEvidenceType(nextType);
+              if (nextType !== "GENERIC_SCREENSHOT") setCaption("");
+            }}
           >
             {ALL_MODULES.map((module) => <option value={module.id} key={module.id}>{module.displayName}</option>)}
           </select>
         </label>
-        <label className="field">
-          <span>Caption</span>
-          <input
-            type="text"
-            value={caption}
-            maxLength={500}
-            onChange={(event) => setCaption(event.target.value)}
-            placeholder="Optional evidence note"
-          />
-        </label>
+        {evidenceType === "GENERIC_SCREENSHOT" ? (
+          <label className="field">
+            <span>Header</span>
+            <input
+              type="text"
+              value={caption}
+              maxLength={500}
+              onChange={(event) => setCaption(event.target.value)}
+              placeholder="Dynamic evidence header (optional)"
+            />
+          </label>
+        ) : null}
         <div className={`paste-zone ${pendingImage ? "has-image" : ""}`} tabIndex={0} aria-label="Screenshot paste area">
           {pendingImage ? (
             <>

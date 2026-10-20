@@ -21,18 +21,20 @@ export interface LayoutImage {
   sequence: number;
   naturalWidth: number;
   naturalHeight: number;
-  hasCaption: boolean;
+  caption: string;
 }
 
 export interface ImagePlacement extends Rectangle {
   name: string;
   moduleId: ModuleId;
   sequence: number;
-  caption?: Rectangle;
+  groupKey: string;
 }
 
 export interface HeadingPlacement extends Rectangle {
   moduleId: ModuleId;
+  groupKey: string;
+  text: string;
 }
 
 export interface LayoutPlan {
@@ -66,7 +68,9 @@ const fitImage = (
 const anchorFor = (anchors: LayoutAnchors, placement: Placement): Rectangle => anchors[placement];
 
 const groupModules = (selectedModules: readonly ModuleId[]): ModuleId[][] => {
-  const selected = new Set(selectedModules);
+  const selected = new Set<ModuleId>(
+    selectedModules.filter((moduleId) => moduleId !== "GENERIC_SCREENSHOT"),
+  );
   const visited = new Set<ModuleId>();
   const sorted = [...selected].sort(
     (a, b) =>
@@ -85,6 +89,42 @@ const groupModules = (selectedModules: readonly ModuleId[]): ModuleId[][] => {
       visited.add(partner);
     }
     groups.push([...group].sort((a, b) => EVIDENCE_MODULES[a].placement.localeCompare(EVIDENCE_MODULES[b].placement)));
+  }
+  return groups;
+};
+
+interface EvidenceGroup {
+  key: string;
+  moduleIds: ModuleId[];
+  images: LayoutImage[];
+  genericHeading?: string;
+}
+
+const buildEvidenceGroups = (
+  selectedModules: readonly ModuleId[],
+  images: readonly LayoutImage[],
+): EvidenceGroup[] => {
+  const groups: EvidenceGroup[] = groupModules(selectedModules).map((moduleIds) => ({
+    key: moduleIds.join("+"),
+    moduleIds,
+    images: images.filter((image) => moduleIds.includes(image.moduleId)),
+  }));
+
+  const genericByCaption = new Map<string, LayoutImage[]>();
+  for (const image of [...images]
+    .filter((candidate) => candidate.moduleId === "GENERIC_SCREENSHOT")
+    .sort((a, b) => a.sequence - b.sequence)) {
+    const existing = genericByCaption.get(image.caption);
+    if (existing) existing.push(image);
+    else genericByCaption.set(image.caption, [image]);
+  }
+  for (const [caption, genericImages] of genericByCaption) {
+    groups.push({
+      key: `GENERIC_SCREENSHOT:${genericImages[0].sequence}`,
+      moduleIds: ["GENERIC_SCREENSHOT"],
+      images: genericImages,
+      genericHeading: caption,
+    });
   }
   return groups;
 };
@@ -108,20 +148,20 @@ export const buildLayout = ({
   const placements: ImagePlacement[] = [];
   let cursorTop = baseTop;
 
-  for (const group of groupModules(selectedModules)) {
+  for (const group of buildEvidenceGroups(selectedModules, images)) {
     const byModule = new Map(
-      group.map((moduleId) => [
+      group.moduleIds.map((moduleId) => [
         moduleId,
-        [...images]
+        [...group.images]
           .filter((image) => image.moduleId === moduleId)
           .sort((a, b) => a.sequence - b.sequence),
       ]),
     );
-    const rowCount = Math.max(0, ...group.map((moduleId) => byModule.get(moduleId)?.length ?? 0));
+    const rowCount = Math.max(0, ...group.moduleIds.map((moduleId) => byModule.get(moduleId)?.length ?? 0));
     if (rowCount === 0) continue;
 
     const headingTop = cursorTop;
-    const visibleHeadingModules = group.filter(
+    const visibleHeadingModules = group.moduleIds.filter(
       (moduleId) =>
         EVIDENCE_MODULES[moduleId].showHeading && (byModule.get(moduleId)?.length ?? 0) > 0,
     );
@@ -130,6 +170,8 @@ export const buildLayout = ({
       const anchor = anchorFor(anchors, definition.placement);
       headings.push({
         moduleId,
+        groupKey: group.key,
+        text: group.genericHeading ?? definition.headingText,
         left: anchor.left + LAYOUT_CONFIG.outerPadding,
         top: headingTop,
         width: anchor.width - LAYOUT_CONFIG.outerPadding * 2,
@@ -142,7 +184,7 @@ export const buildLayout = ({
 
     for (let index = 0; index < rowCount; index += 1) {
       let rowHeight = 0;
-      for (const moduleId of group) {
+      for (const moduleId of group.moduleIds) {
         const image = byModule.get(moduleId)?.[index];
         if (!image) continue;
         const definition = EVIDENCE_MODULES[moduleId];
@@ -158,23 +200,13 @@ export const buildLayout = ({
           name: image.name,
           moduleId,
           sequence: image.sequence,
+          groupKey: group.key,
           left: anchor.left + LAYOUT_CONFIG.outerPadding,
           top: rowTop,
           ...size,
         };
-        if (image.hasCaption) {
-          placement.caption = {
-            left: placement.left,
-            top: placement.top + placement.height + 2,
-            width: placement.width,
-            height: LAYOUT_CONFIG.captionHeight,
-          };
-        }
         placements.push(placement);
-        rowHeight = Math.max(
-          rowHeight,
-          placement.height + (image.hasCaption ? LAYOUT_CONFIG.captionHeight + 2 : 0),
-        );
+        rowHeight = Math.max(rowHeight, placement.height);
       }
       rowTop += rowHeight + LAYOUT_CONFIG.itemGap;
     }
