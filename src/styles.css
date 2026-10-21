@@ -77,11 +77,21 @@ input[type="text"], select {
 .button-primary { background: #0f6cbd; color: #fff; }
 .button-secondary { background: #fff; border-color: #8a8886; color: #242424; }
 .button-danger { background: #fff; border-color: #c50f1f; color: #a4262c; }
+.refresh-button { align-items: center; display: inline-flex; justify-content: center; min-width: 34px; padding: 5px; }
+.refresh-icon { fill: none; height: 20px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; width: 20px; }
+.refresh-icon.is-spinning { animation: refresh-spin 0.8s linear infinite; }
+
+@keyframes refresh-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh-icon.is-spinning { animation: none; }
+}
 
 .message { border-radius: 4px; padding: 9px; font-size: 13px; }
 .message-success { background: #dff6dd; color: #0e700e; }
 .message-error { background: #fde7e9; color: #a4262c; }
 .message-info { background: #f0f6fc; color: #0f548c; }
+.message-warning { background: #fff4ce; color: #8a4b08; }
 
 @media (min-width: 520px) {
   .actions { grid-template-columns: 1fr 1fr; }

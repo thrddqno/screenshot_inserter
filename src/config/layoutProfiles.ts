@@ -3,10 +3,6 @@ export const IMAGE_LIMITS = {
   acceptedMimeTypes: ["image/png", "image/jpeg"] as const,
 };
 
-export const WORKBOOK_CONFIG = {
-  summarySheetName: "Summary",
-} as const;
-
 export const LAYOUT_CONFIG = {
   leftAnchorRange: "A1:D1",
   rightAnchorRange: "F1:I1",

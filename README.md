@@ -101,20 +101,26 @@ Some Microsoft 365 builds also expose **Upload My Add-in** directly.
 
 ## Use
 
-1. Open scenario sheet, or select scenario row on `Summary`.
-2. Task pane refreshes automatically when worksheet tab changes. Select **Refresh** if needed.
-3. Choose Test Type. Currently only `SOA` is available.
+1. Open test scenario sheet, or select scenario row on `Summary`.
+2. Task pane refreshes automatically when worksheet tab changes. Use refresh icon if needed.
+3. Choose Test Type: `General` provides only Generic Screenshot; `SOA` provides all SOA evidence types.
 4. Choose Evidence Type.
 5. For Generic Screenshot, optionally enter dynamic Header.
 6. Focus task pane and press `Ctrl+V` after Windows Snipping Tool capture.
 7. Leave Status as `unchanged` unless explicit update is intended.
-8. Select **Insert Evidence**.
+8. Select **Insert**.
 
-Changing selected row while already on `Summary` does not activate another worksheet. Select **Refresh** after changing Summary row.
+Changing selected row while already on `Summary` does not activate another worksheet. Use refresh icon after changing Summary row.
 
 Images are appended below all existing non-add-in shapes. Existing `Picture N` objects are not moved, renamed, or deleted.
 
-Test Type selection lasts for the current task-pane session. Changing it keeps the pending screenshot, resets Evidence Type to that profile's default, and clears Generic Header. Managed image metadata isolates each profile so future test types do not reflow or remove SOA evidence.
+Test Type selection is stored in Excel workbook settings. A workbook without a saved choice defaults to `General`. Changing Test Type keeps pending screenshot and Status, resets Evidence Type to that profile's default, and clears Header. General and SOA evidence are isolated: one profile does not reflow or remove another profile's images.
+
+### Test Scenario discovery
+
+Worksheet names do not need a `TS` prefix. Task pane searches `A1:P12` for semantic labels such as `Test Case No`, `Condition`, and `Expected Result`, supporting horizontal or vertical layouts, multiline text, and data continuing through following rows. Numeric displayed IDs such as `11.0` remain text.
+
+On `Summary`, task pane finds Scenario ID column from its header instead of assuming column A, then resolves worksheet named by selected row. Blank, utility, incomplete, or ambiguous sheets safely show `Not loaded` and disable workbook actions.
 
 Inserted image names follow:
 
@@ -123,7 +129,7 @@ EV__SCENARIO_ID__MODULE_ID__SEQUENCE
 EV__TS4_1_1__PDF_PAPER__001
 ```
 
-**Remove Last Inserted Evidence** deletes only highest-sequence `EV__...` image. Backward-compatible cleanup also removes matching legacy `EVC__...` caption shape if present.
+**Remove Last Inserted** deletes only highest-sequence `EV__...` image for selected Test Type. Backward-compatible cleanup also removes matching legacy `EVC__...` caption shape if present.
 
 New evidence headings use worksheet cells, not shapes:
 

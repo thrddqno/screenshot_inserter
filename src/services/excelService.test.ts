@@ -59,6 +59,7 @@ const createHost = () => {
   const legacyShape = createShape("Picture 1", { left: 10, top: 100, width: 300, height: 400 });
   const items: FakeShape[] = [legacyShape];
   const statusRange = { values: [["ORIGINAL"]] };
+  const semanticStatusRange = { values: [["ORIGINAL-ROW-3"]] };
   const headingCells = new Map<string, {
     values: string[][];
     formulas: string[][];
@@ -89,6 +90,7 @@ const createHost = () => {
     "A1:D1": { left: 0, width: 400, load: vi.fn() },
     "F1:I1": { left: 420, width: 400, load: vi.fn() },
     D2: statusRange,
+    D3: semanticStatusRange,
   };
   const getCell = (rowIndex: number, columnIndex: number) => {
       const key = `${rowIndex}:${columnIndex}`;
@@ -142,7 +144,7 @@ const createHost = () => {
   };
   vi.stubGlobal("Office", {});
   vi.stubGlobal("Excel", { run: (callback: (value: typeof context) => unknown) => callback(context) });
-  return { items, legacyShape, statusRange, headingCells, addTextBox: shapes.addTextBox };
+  return { items, legacyShape, statusRange, semanticStatusRange, headingCells, addTextBox: shapes.addTextBox };
 };
 
 describe("Excel evidence service", () => {
@@ -208,6 +210,81 @@ describe("Excel evidence service", () => {
       version: 2,
       testTypeId: "SOA",
     });
+  });
+
+  it("stores General Generic screenshots separately from SOA", async () => {
+    const host = createHost();
+    const soaName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "SOA",
+      status: "UNCHANGED",
+    });
+    const soaShape = host.items.find((shape) => shape.name === soaName)!;
+    const soaTop = soaShape.top;
+
+    const generalName = await insertEvidence({
+      scenario,
+      testTypeId: "GENERAL",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "General",
+      status: "UNCHANGED",
+    });
+    const generalShape = host.items.find((shape) => shape.name === generalName)!;
+
+    expect(JSON.parse(generalShape.altTextDescription ?? "{}").testTypeId).toBe("GENERAL");
+    expect(soaShape.top).toBe(soaTop);
+    expect(JSON.parse(soaShape.altTextDescription ?? "{}").testTypeId).toBe("SOA");
+
+    await expect(removeLastInsertedEvidence(scenario, "SOA")).resolves.toBe(soaName);
+    expect(soaShape.delete).toHaveBeenCalledOnce();
+    expect(generalShape.delete).not.toHaveBeenCalled();
+  });
+
+  it("rejects SOA-only evidence under General", async () => {
+    createHost();
+    await expect(
+      insertEvidence({
+        scenario,
+        testTypeId: "GENERAL",
+        moduleId: "PDF_PAPER",
+        image,
+        caption: "",
+        status: "UNCHANGED",
+      }),
+    ).rejects.toThrow("unavailable for selected test type");
+  });
+
+  it("writes Status to semantically discovered scenario row", async () => {
+    const host = createHost();
+    await insertEvidence({
+      scenario: { ...scenario, statusCellAddress: "D3" },
+      testTypeId: "GENERAL",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "",
+      status: "PASS",
+    });
+    expect(host.semanticStatusRange.values).toEqual([["PASS"]]);
+    expect(host.statusRange.values).toEqual([["ORIGINAL"]]);
+  });
+
+  it("refuses Status changes when semantic Status column is unavailable", async () => {
+    const host = createHost();
+    await expect(
+      insertEvidence({
+        scenario,
+        testTypeId: "GENERAL",
+        moduleId: "GENERIC_SCREENSHOT",
+        image,
+        caption: "",
+        status: "PASS",
+      }),
+    ).rejects.toThrow("Status column could not be located");
+    expect(host.items.filter((shape) => shape.name.startsWith("EV__"))).toHaveLength(0);
   });
 
   it("migrates version-one managed image metadata to SOA", async () => {

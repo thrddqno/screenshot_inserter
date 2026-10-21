@@ -13,7 +13,7 @@ export const MODULE_IDS = [
 ] as const;
 
 export type ModuleId = (typeof MODULE_IDS)[number];
-export const TEST_TYPE_IDS = ["SOA"] as const;
+export const TEST_TYPE_IDS = ["GENERAL", "SOA"] as const;
 export type TestTypeId = (typeof TEST_TYPE_IDS)[number];
 export type Placement = "full" | "left" | "right";
 
@@ -39,7 +39,20 @@ export interface ScenarioContext {
   scenarioId: string;
   condition: string;
   expectedResult: string;
+  statusCellAddress?: string;
 }
+
+export type ScenarioNotLoadedReason =
+  | "utility-sheet"
+  | "summary-header-not-found"
+  | "summary-row-empty"
+  | "summary-target-missing"
+  | "scenario-header-not-found"
+  | "scenario-data-not-found";
+
+export type ScenarioReadResult =
+  | { kind: "loaded"; scenario: ScenarioContext }
+  | { kind: "notLoaded"; reason: ScenarioNotLoadedReason };
 
 export type EvidenceStatus = "UNCHANGED" | "PASS" | "FAIL" | "BLOCKED";
 

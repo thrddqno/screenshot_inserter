@@ -1,10 +1,30 @@
-import { MODULE_IDS, TEST_TYPE_IDS, type TestTypeId, type TestTypeProfile } from "../types/evidence";
+import { TEST_TYPE_IDS, type ModuleId, type TestTypeId, type TestTypeProfile } from "../types/evidence";
+
+const SOA_MODULE_IDS: readonly ModuleId[] = [
+  "INVOICING",
+  "SOA_BATCH",
+  "SOA_BATCH_PAPERPLUS",
+  "STATEMENT_DUPLICATE",
+  "RETAILER_STATEMENT_DUPLICATE",
+  "MCD",
+  "PDF_PAPER",
+  "AFP",
+  "PDF_PAPERPLUS",
+  "AFP_PAPERPLUS",
+  "GENERIC_SCREENSHOT",
+];
 
 export const TEST_TYPE_PROFILES: Record<TestTypeId, TestTypeProfile> = {
+  GENERAL: {
+    id: "GENERAL",
+    displayName: "General",
+    moduleIds: ["GENERIC_SCREENSHOT"],
+    defaultModuleId: "GENERIC_SCREENSHOT",
+  },
   SOA: {
     id: "SOA",
     displayName: "SOA",
-    moduleIds: MODULE_IDS,
+    moduleIds: SOA_MODULE_IDS,
     defaultModuleId: "GENERIC_SCREENSHOT",
   },
 };

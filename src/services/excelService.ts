@@ -1,13 +1,15 @@
 import { EVIDENCE_MODULES } from "../config/evidenceModules";
-import { LAYOUT_CONFIG, WORKBOOK_CONFIG } from "../config/layoutProfiles";
+import { LAYOUT_CONFIG } from "../config/layoutProfiles";
 import { isTestTypeId, TEST_TYPE_PROFILES } from "../config/testTypeProfiles";
 import type {
   EvidenceStatus,
   ModuleId,
   PendingImage,
   ScenarioContext,
+  ScenarioReadResult,
   TestTypeId,
 } from "../types/evidence";
+import { discoverScenario, findSummaryScenarioColumn, isSummaryWorksheet } from "./workbookDiscovery";
 import { buildLayout, type LayoutAnchors, type LayoutImage, type Rectangle } from "./layoutEngine";
 import {
   captionShapeName,
@@ -19,6 +21,7 @@ import {
 } from "./shapeNames";
 
 const STATUS_VALUES = new Set<EvidenceStatus>(["UNCHANGED", "PASS", "FAIL", "BLOCKED"]);
+const DISCOVERED_STATUS_ADDRESS = /^[A-P](?:[1-9]|1[0-2])$/;
 const CAPTION_MAXIMUM_LENGTH = 500;
 const MANAGED_METADATA_VERSION = 2;
 
@@ -132,44 +135,51 @@ export const subscribeWorksheetActivated = async (
   };
 };
 
-export const readCurrentScenario = async (): Promise<ScenarioContext> => {
+export const readCurrentScenario = async (): Promise<ScenarioReadResult> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Open this page inside an Excel task pane.");
 
   return Excel.run(async (context) => {
     const activeSheet = context.workbook.worksheets.getActiveWorksheet();
-    const selectedRange = context.workbook.getSelectedRange();
     activeSheet.load("name");
-    selectedRange.load("rowIndex");
     await context.sync();
 
-    let targetName = activeSheet.name;
-    if (activeSheet.name === WORKBOOK_CONFIG.summarySheetName) {
-      const scenarioCell = activeSheet.getRangeByIndexes(selectedRange.rowIndex, 0, 1, 1);
-      scenarioCell.load("text");
+    let targetSheet = activeSheet;
+    if (isSummaryWorksheet(activeSheet.name)) {
+      const selectedRange = context.workbook.getSelectedRange();
+      const summaryProbe = activeSheet.getRange("A1:P10");
+      selectedRange.load("rowIndex");
+      summaryProbe.load("text");
       await context.sync();
-      targetName = scenarioCell.text[0]?.[0]?.trim() ?? "";
-      if (!targetName) throw new ExcelServiceError("Selected Summary row has no Scenario ID in column A.");
+
+      const scenarioColumn = findSummaryScenarioColumn(summaryProbe.text);
+      if (!scenarioColumn) return { kind: "notLoaded", reason: "summary-header-not-found" };
+      if (selectedRange.rowIndex === scenarioColumn.headerRowIndex) {
+        return { kind: "notLoaded", reason: "summary-row-empty" };
+      }
+
+      const summaryRow = activeSheet.getRangeByIndexes(selectedRange.rowIndex, 0, 1, 16);
+      summaryRow.load("text");
+      await context.sync();
+      const targetName = summaryRow.text[0]?.[scenarioColumn.columnIndex]?.trim() ?? "";
+      if (!targetName) return { kind: "notLoaded", reason: "summary-row-empty" };
+
+      targetSheet = context.workbook.worksheets.getItemOrNullObject(targetName);
+      targetSheet.load("name");
+      await context.sync();
+      if (targetSheet.isNullObject) {
+        return { kind: "notLoaded", reason: "summary-target-missing" };
+      }
     }
 
-    const targetSheet = context.workbook.worksheets.getItemOrNullObject(targetName);
-    targetSheet.load("name");
-    await context.sync();
-    if (targetSheet.isNullObject) {
-      throw new ExcelServiceError(`Scenario worksheet "${targetName}" does not exist.`);
-    }
-
-    const header = targetSheet.getRange("A2:C2");
-    header.load("text");
+    const scenarioProbe = targetSheet.getRange("A1:P12");
+    scenarioProbe.load("text");
     await context.sync();
 
-    const scenarioId = header.text[0]?.[0]?.trim() ?? "";
-    if (!scenarioId) throw new ExcelServiceError(`Worksheet "${targetSheet.name}" has no Scenario ID in A2.`);
-
+    const discovery = discoverScenario(scenarioProbe.text, targetSheet.name);
+    if (discovery.scenario) return { kind: "loaded", scenario: discovery.scenario };
     return {
-      worksheetName: targetSheet.name,
-      scenarioId,
-      condition: header.text[0]?.[1] ?? "",
-      expectedResult: header.text[0]?.[2] ?? "",
+      kind: "notLoaded",
+      reason: discovery.headerFound ? "scenario-data-not-found" : "utility-sheet",
     };
   });
 };
@@ -232,6 +242,12 @@ export const insertEvidence = async ({
 }: InsertEvidenceInput): Promise<string> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
   if (!STATUS_VALUES.has(status)) throw new ExcelServiceError("Invalid status value.");
+  if (
+    status !== "UNCHANGED" &&
+    (!scenario.statusCellAddress || !DISCOVERED_STATUS_ADDRESS.test(scenario.statusCellAddress))
+  ) {
+    throw new ExcelServiceError("Status column could not be located for this test scenario.");
+  }
   if (!isTestTypeId(testTypeId) || !TEST_TYPE_PROFILES[testTypeId].moduleIds.includes(moduleId)) {
     throw new ExcelServiceError("Evidence type is unavailable for selected test type.");
   }
@@ -420,7 +436,7 @@ export const insertEvidence = async ({
       }
 
       if (status !== "UNCHANGED") {
-        sheet.getRange("D2").values = [[status]];
+        sheet.getRange(scenario.statusCellAddress!).values = [[status]];
       }
 
       await context.sync();
