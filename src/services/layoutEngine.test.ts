@@ -29,16 +29,16 @@ describe("buildLayout", () => {
     expect(afp.width / afp.height).toBeCloseTo(500 / 700);
   });
 
-  it("starts later Paperplus group below taller prior pair", () => {
+  it("starts later Paperless group below taller prior pair", () => {
     const plan = buildLayout({
-      selectedModules: ["SOA_BATCH", "SOA_BATCH_PAPERPLUS", "PDF_PAPER", "AFP", "PDF_PAPERPLUS", "AFP_PAPERPLUS"],
+      selectedModules: ["SOA_BATCH", "SOA_BATCH_PAPERLESS", "PDF_PAPER", "AFP", "PDF_PAPERLESS", "AFP_PAPERLESS"],
       images: [
         { name: "soa", moduleId: "SOA_BATCH", sequence: 1, naturalWidth: 1000, naturalHeight: 400, caption: "" },
-        { name: "soa-pp", moduleId: "SOA_BATCH_PAPERPLUS", sequence: 2, naturalWidth: 700, naturalHeight: 700, caption: "" },
+        { name: "soa-pp", moduleId: "SOA_BATCH_PAPERLESS", sequence: 2, naturalWidth: 700, naturalHeight: 700, caption: "" },
         { name: "pdf", moduleId: "PDF_PAPER", sequence: 3, naturalWidth: 600, naturalHeight: 900, caption: "" },
         { name: "afp", moduleId: "AFP", sequence: 4, naturalWidth: 500, naturalHeight: 700, caption: "" },
-        { name: "pdf-pp", moduleId: "PDF_PAPERPLUS", sequence: 5, naturalWidth: 600, naturalHeight: 900, caption: "" },
-        { name: "afp-pp", moduleId: "AFP_PAPERPLUS", sequence: 6, naturalWidth: 500, naturalHeight: 700, caption: "" },
+        { name: "pdf-pp", moduleId: "PDF_PAPERLESS", sequence: 5, naturalWidth: 600, naturalHeight: 900, caption: "" },
+        { name: "afp-pp", moduleId: "AFP_PAPERLESS", sequence: 6, naturalWidth: 500, naturalHeight: 700, caption: "" },
       ],
       anchors,
       requestedBaseTop: 0,
@@ -46,11 +46,11 @@ describe("buildLayout", () => {
     });
     const pdf = plan.images.find((image) => image.name === "pdf")!;
     const afp = plan.images.find((image) => image.name === "afp")!;
-    const pdfPaperplus = plan.images.find((image) => image.name === "pdf-pp")!;
-    const afpPaperplus = plan.images.find((image) => image.name === "afp-pp")!;
+    const pdfPaperless = plan.images.find((image) => image.name === "pdf-pp")!;
+    const afpPaperless = plan.images.find((image) => image.name === "afp-pp")!;
     expect(pdf.top).toBe(afp.top);
-    expect(pdfPaperplus.top).toBe(afpPaperplus.top);
-    expect(pdfPaperplus.top).toBeGreaterThan(Math.max(pdf.top + pdf.height, afp.top + afp.height));
+    expect(pdfPaperless.top).toBe(afpPaperless.top);
+    expect(pdfPaperless.top).toBeGreaterThan(Math.max(pdf.top + pdf.height, afp.top + afp.height));
   });
 
   it("preserves right placement when only right-side module exists", () => {

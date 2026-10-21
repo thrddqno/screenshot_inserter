@@ -22,6 +22,19 @@ describe("shape names", () => {
     expect(parseImageShapeName("EV__TS4_1_1__NOT_REAL__003")).toBeNull();
   });
 
+  it("parses legacy Paperplus shape names as Paperless modules", () => {
+    expect(parseImageShapeName("EV__TS4_1_1__PDF_PAPERPLUS__001")).toEqual({
+      scenarioKey: "TS4_1_1",
+      moduleId: "PDF_PAPERLESS",
+      sequence: 1,
+    });
+    expect(parseImageShapeName("EV__TS4_1_1__AFP_PAPERPLUS__002")?.moduleId).toBe("AFP_PAPERLESS");
+    expect(parseImageShapeName("EV__TS4_1_1__SOA_BATCH_PAPERPLUS__003")?.moduleId).toBe(
+      "SOA_BATCH_PAPERLESS",
+    );
+    expect(parseImageShapeName("EV__TS4_1_1__PDF_PAPERLESS__004")?.moduleId).toBe("PDF_PAPERLESS");
+  });
+
   it("uses global scenario sequence for safe last-item removal", () => {
     expect(
       nextEvidenceSequence(

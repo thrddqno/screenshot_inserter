@@ -1,4 +1,5 @@
 import { isTestTypeId, TEST_TYPE_PROFILES } from "../config/testTypeProfiles";
+import { normalizeLegacyModuleId } from "./shapeNames";
 import type { EvidenceStatus, GenericSide, ModuleId, TestTypeId } from "../types/evidence";
 
 export const WORKBOOK_PREFERENCES_KEY = "testEvidenceInserter.preferences";
@@ -55,10 +56,12 @@ const sanitizeProfile = (
   const fallback = createDefaultPreferences().profiles[testTypeId];
   if (!value || typeof value !== "object") return { profile: fallback, valid: false };
   const candidate = value as { evidenceType?: unknown; genericSide?: unknown; header?: unknown };
+  const normalizedEvidenceType =
+    typeof candidate.evidenceType === "string" ? normalizeLegacyModuleId(candidate.evidenceType) : candidate.evidenceType;
   const evidenceType =
-    typeof candidate.evidenceType === "string" &&
-    TEST_TYPE_PROFILES[testTypeId].moduleIds.includes(candidate.evidenceType as ModuleId)
-      ? (candidate.evidenceType as ModuleId)
+    typeof normalizedEvidenceType === "string" &&
+    TEST_TYPE_PROFILES[testTypeId].moduleIds.includes(normalizedEvidenceType as ModuleId)
+      ? (normalizedEvidenceType as ModuleId)
       : fallback.evidenceType;
   const genericSide = isGenericSide(candidate.genericSide) ? candidate.genericSide : fallback.genericSide;
   const header =
@@ -68,7 +71,7 @@ const sanitizeProfile = (
   return {
     profile: { evidenceType, genericSide, header },
     valid:
-      evidenceType === candidate.evidenceType &&
+      evidenceType === normalizedEvidenceType &&
       genericSide === candidate.genericSide &&
       header === candidate.header,
   };

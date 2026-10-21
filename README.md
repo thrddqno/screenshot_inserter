@@ -5,7 +5,7 @@ Proof-of-concept Excel task-pane add-in. Organizes screenshots after tester manu
 Milestone scope:
 
 - Normal SOA layout represented by `TS4.1.1`
-- Paperplus layout represented by `TS4.25.1`
+- Paperless layout represented by `TS4.25.1`
 - No scenario classification from `.1`, `.2`, or `.3` suffixes
 - No backend or external screenshot upload
 
@@ -107,7 +107,7 @@ Some Microsoft 365 builds also expose **Upload My Add-in** directly.
 2. Task pane refreshes automatically when worksheet tab changes. Use refresh icon if needed.
 3. Choose Test Type: `General` provides only Generic Screenshot; `SOA` provides all SOA evidence types.
 4. Choose Evidence Type.
-5. For Generic Screenshot, choose **Left (A:D)** or **Right (F:I)** and optionally enter dynamic Header.
+5. For Generic Screenshot, choose **Left (A:D)** or **Right (F:I)** and optionally enter dynamic Header. Right images start at column F and match the `A:D` width.
 6. Focus task pane and press `Ctrl+V` after Windows Snipping Tool capture.
 7. Select **Insert**. Screenshot insertion never changes worksheet Status.
 8. In separate **Worksheet Status** panel, choose `PASS/FAIL`, `PASS`, or `FAIL`. Changing dropdown immediately updates workbook; no button required.
@@ -148,8 +148,8 @@ New evidence headings use worksheet cells, not shapes:
 - Left cell: column `A`
 - Right cell: column `F`
 - Gray fill, bold black text
-- Images fit left `A:D` or right `F:I` slot
-- Every image spans its complete slot width; height follows original aspect ratio without cropping
+- Images fit left `A:D` or right `F:I` slot; right images start at F and match the `A:D` width
+- Every image spans its assigned slot width; height follows original aspect ratio without cropping
 - MCD and Statement Duplicate intentionally have no heading
 - Header input appears only for Generic Screenshot
 
@@ -163,7 +163,7 @@ Generic Screenshot groups use exact Header matching:
 
 Generic Screenshot Side is explicit per insertion:
 
-- Left fills `A:D`; Right fills `F:I`
+- Left fills `A:D`; Right starts at F and matches the `A:D` width
 - Consecutive opposite sides in the same exact Header group share one row
 - Consecutive same-side images start separate rows
 - Taller paired image determines where the next row begins
@@ -186,12 +186,12 @@ npm run build
 3. Insert AFP screenshot.
 4. Confirm left/right images share top, retain aspect ratio, and do not overlap.
 
-### Paperplus acceptance
+### Paperless acceptance
 
 1. Open working copy and `TS4.25.1`.
-2. Insert SOA Batch, then SOA Batch - Paperplus.
+2. Insert SOA Batch, then SOA Batch - Paperless.
 3. Insert PDF, then AFP.
-4. Insert PDF - Paperplus, then AFP - Paperplus.
+4. Insert PDF - Paperless, then AFP - Paperless.
 5. Confirm each pair shares top and each later group starts below prior taller image.
 6. Confirm all original screenshots remain unchanged.
 

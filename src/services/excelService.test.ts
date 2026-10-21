@@ -490,14 +490,14 @@ describe("Excel evidence service", () => {
   it.each<ModuleId>([
     "INVOICING",
     "SOA_BATCH",
-    "SOA_BATCH_PAPERPLUS",
+    "SOA_BATCH_PAPERLESS",
     "STATEMENT_DUPLICATE",
     "RETAILER_STATEMENT_DUPLICATE",
     "MCD",
     "PDF_PAPER",
     "AFP",
-    "PDF_PAPERPLUS",
-    "AFP_PAPERPLUS",
+    "PDF_PAPERLESS",
+    "AFP_PAPERLESS",
   ])("keeps repeated %s evidence fixed", async (moduleId) => {
     const host = createHost();
     const firstName = await insertEvidence({
@@ -522,12 +522,12 @@ describe("Excel evidence service", () => {
   });
 
   it.each<[ModuleId, ModuleId]>([
-    ["SOA_BATCH", "SOA_BATCH_PAPERPLUS"],
-    ["SOA_BATCH_PAPERPLUS", "SOA_BATCH"],
+    ["SOA_BATCH", "SOA_BATCH_PAPERLESS"],
+    ["SOA_BATCH_PAPERLESS", "SOA_BATCH"],
     ["PDF_PAPER", "AFP"],
     ["AFP", "PDF_PAPER"],
-    ["PDF_PAPERPLUS", "AFP_PAPERPLUS"],
-    ["AFP_PAPERPLUS", "PDF_PAPERPLUS"],
+    ["PDF_PAPERLESS", "AFP_PAPERLESS"],
+    ["AFP_PAPERLESS", "PDF_PAPERLESS"],
   ])("keeps %s fixed when paired with %s", async (firstModule, secondModule) => {
     const host = createHost();
     const firstName = await insertEvidence({

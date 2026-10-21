@@ -264,7 +264,8 @@ const anchorsFromRanges = (
   fullRange: Excel.Range,
 ): LayoutAnchors => ({
   left: { left: leftRange.left, top: 0, width: leftRange.width, height: 0 },
-  right: { left: rightRange.left, top: 0, width: rightRange.width, height: 0 },
+  // Right images start at column F but match the A:D width so both sides stay uniform.
+  right: { left: rightRange.left, top: 0, width: leftRange.width, height: 0 },
   full: { left: fullRange.left, top: 0, width: fullRange.width, height: 0 },
 });
 

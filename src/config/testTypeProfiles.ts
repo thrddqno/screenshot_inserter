@@ -3,14 +3,14 @@ import { TEST_TYPE_IDS, type ModuleId, type TestTypeId, type TestTypeProfile } f
 const SOA_MODULE_IDS: readonly ModuleId[] = [
   "INVOICING",
   "SOA_BATCH",
-  "SOA_BATCH_PAPERPLUS",
+  "SOA_BATCH_PAPERLESS",
   "STATEMENT_DUPLICATE",
   "RETAILER_STATEMENT_DUPLICATE",
   "MCD",
   "PDF_PAPER",
   "AFP",
-  "PDF_PAPERPLUS",
-  "AFP_PAPERPLUS",
+  "PDF_PAPERLESS",
+  "AFP_PAPERLESS",
   "GENERIC_SCREENSHOT",
 ];
 

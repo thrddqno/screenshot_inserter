@@ -71,6 +71,23 @@ describe("workbook preferences", () => {
     expect(result.warning).toBeDefined();
   });
 
+  it("migrates legacy Paperplus evidence types without warning", async () => {
+    const stored = preferences({
+      testTypeId: "SOA",
+      profiles: {
+        GENERAL: { evidenceType: "GENERIC_SCREENSHOT", genericSide: "left", header: "" },
+        SOA: { evidenceType: "PDF_PAPERLESS", genericSide: "right", header: "Legacy Header" },
+      },
+    });
+    stored.profiles.SOA.evidenceType = "PDF_PAPERPLUS" as never;
+    createHost(stored);
+    const result = await readWorkbookPreferences();
+    expect(result.warning).toBeUndefined();
+    expect(result.preferences.profiles.SOA.evidenceType).toBe("PDF_PAPERLESS");
+    expect(result.preferences.profiles.SOA.genericSide).toBe("right");
+    expect(result.preferences.profiles.SOA.header).toBe("Legacy Header");
+  });
+
   it.each([
     { version: 3, testTypeId: "SOA" },
     { version: 2, testTypeId: "FI", status: "PASS", profiles: {} },

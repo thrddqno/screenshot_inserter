@@ -7,8 +7,17 @@ export interface ParsedEvidenceShapeName {
 }
 
 const MODULE_PATTERN =
-  "INVOICING|SOA_BATCH|SOA_BATCH_PAPERPLUS|STATEMENT_DUPLICATE|RETAILER_STATEMENT_DUPLICATE|MCD|PDF_PAPER|AFP|PDF_PAPERPLUS|AFP_PAPERPLUS|GENERIC_SCREENSHOT";
+  "INVOICING|SOA_BATCH|SOA_BATCH_PAPERLESS|SOA_BATCH_PAPERPLUS|STATEMENT_DUPLICATE|RETAILER_STATEMENT_DUPLICATE|MCD|PDF_PAPER|AFP|PDF_PAPERLESS|PDF_PAPERPLUS|AFP_PAPERLESS|AFP_PAPERPLUS|GENERIC_SCREENSHOT";
 const IMAGE_NAME_PATTERN = new RegExp(`^EV__([A-Z0-9_]+)__(${MODULE_PATTERN})__(\\d{3,})$`);
+
+const LEGACY_MODULE_ID_ALIASES: Record<string, ModuleId> = {
+  SOA_BATCH_PAPERPLUS: "SOA_BATCH_PAPERLESS",
+  PDF_PAPERPLUS: "PDF_PAPERLESS",
+  AFP_PAPERPLUS: "AFP_PAPERLESS",
+};
+
+export const normalizeLegacyModuleId = (value: string): ModuleId =>
+  LEGACY_MODULE_ID_ALIASES[value] ?? (value as ModuleId);
 
 export const scenarioKey = (scenarioId: string): string => {
   const key = scenarioId.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -27,7 +36,7 @@ export const parseImageShapeName = (name: string): ParsedEvidenceShapeName | nul
   if (!match) return null;
   return {
     scenarioKey: match[1],
-    moduleId: match[2] as ModuleId,
+    moduleId: normalizeLegacyModuleId(match[2]),
     sequence: Number(match[3]),
   };
 };
