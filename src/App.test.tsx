@@ -42,6 +42,11 @@ describe("task pane", () => {
     expect(screen.getByRole("option", { name: "Left (A:D)" })).toBeVisible();
     expect(screen.getByRole("option", { name: "Right (F:I)" })).toBeVisible();
     expect(screen.getByLabelText("Header")).toBeVisible();
+    const status = screen.getByLabelText("Status");
+    expect(status).toHaveValue("UNCHANGED");
+    expect(status.querySelectorAll("option")).toHaveLength(4);
+    expect(screen.getByRole("option", { name: "PASS/FAIL" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "BLOCKED" })).not.toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("Open this page inside an Excel task pane.");
   });
 
@@ -51,12 +56,14 @@ describe("task pane", () => {
       scenarioId: "TS4.1.1",
       condition: "First",
       expectedResult: "First result",
+      status: "PASS" as const,
     };
     const second = {
       worksheetName: "TS4.25.1",
       scenarioId: "TS4.25.1",
       condition: "Second",
       expectedResult: "Second result",
+      status: "FAIL" as const,
     };
     let activationHandler: excelService.WorksheetActivatedHandler | undefined;
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
@@ -74,6 +81,7 @@ describe("task pane", () => {
     render(<App />);
     expect(await screen.findByText("TS4.1.1")).toBeVisible();
     expect(screen.getByLabelText("Test Type")).toHaveValue("SOA");
+    expect(screen.getByLabelText("Status")).toHaveValue("PASS");
     expect(screen.getByLabelText("Evidence Type")).toContainHTML("Retailer Statement Duplicate");
     fireEvent.change(screen.getByLabelText("Side"), { target: { value: "right" } });
     await act(async () => {
@@ -81,6 +89,7 @@ describe("task pane", () => {
     });
     expect(await screen.findByText("TS4.25.1")).toBeVisible();
     expect(screen.getByLabelText("Side")).toHaveValue("left");
+    expect(screen.getByLabelText("Status")).toHaveValue("FAIL");
     expect(excelService.readCurrentScenario).toHaveBeenCalledTimes(2);
   });
 
@@ -118,9 +127,11 @@ describe("task pane", () => {
 
     render(<App />);
     await screen.findByText("No test scenario loaded.");
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "PASS/FAIL" } });
     fireEvent.change(screen.getByLabelText("Test Type"), { target: { value: "SOA" } });
 
     expect(screen.getByLabelText("Evidence Type")).toContainHTML("Retailer Statement Duplicate");
+    expect(screen.getByLabelText("Status")).toHaveValue("PASS/FAIL");
     expect(writePreferences).toHaveBeenCalledWith("SOA");
 
     const evidenceType = screen.getByLabelText("Evidence Type");
@@ -129,6 +140,29 @@ describe("task pane", () => {
     expect(screen.queryByLabelText("Side")).not.toBeInTheDocument();
     fireEvent.change(evidenceType, { target: { value: "GENERIC_SCREENSHOT" } });
     expect(screen.getByLabelText("Side")).toHaveValue("left");
+  });
+
+  it("reloads workbook Status during manual scenario refresh", async () => {
+    const scenario = {
+      worksheetName: "TS6.1",
+      scenarioId: "TS6.1",
+      condition: "Condition",
+      expectedResult: "Result",
+    };
+    vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
+    vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
+      preferences: { version: 1, testTypeId: "GENERAL" },
+    });
+    vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
+    vi.spyOn(excelService, "readCurrentScenario")
+      .mockResolvedValueOnce({ kind: "loaded", scenario: { ...scenario, status: "PASS" } })
+      .mockResolvedValueOnce({ kind: "loaded", scenario: { ...scenario, status: "PASS/FAIL" } });
+
+    render(<App />);
+    expect(await screen.findByText("TS6.1")).toBeVisible();
+    expect(screen.getByLabelText("Status")).toHaveValue("PASS");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh test scenario" }));
+    await waitFor(() => expect(screen.getByLabelText("Status")).toHaveValue("PASS/FAIL"));
   });
 
   it("serializes rapid Test Type saves so latest choice wins", async () => {

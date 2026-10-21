@@ -21,7 +21,7 @@ import {
   scenarioKey,
 } from "./shapeNames";
 
-const STATUS_VALUES = new Set<EvidenceStatus>(["UNCHANGED", "PASS", "FAIL", "BLOCKED"]);
+const STATUS_VALUES = new Set<EvidenceStatus>(["UNCHANGED", "PASS/FAIL", "PASS", "FAIL"]);
 const DISCOVERED_STATUS_ADDRESS = /^[A-P](?:[1-9]|1[0-2])$/;
 const CAPTION_MAXIMUM_LENGTH = 500;
 const MANAGED_METADATA_VERSION = 3;

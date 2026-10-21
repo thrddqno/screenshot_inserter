@@ -40,6 +40,7 @@ export interface ScenarioContext {
   scenarioId: string;
   condition: string;
   expectedResult: string;
+  status?: EvidenceStatus;
   statusCellAddress?: string;
 }
 
@@ -55,7 +56,7 @@ export type ScenarioReadResult =
   | { kind: "loaded"; scenario: ScenarioContext }
   | { kind: "notLoaded"; reason: ScenarioNotLoadedReason };
 
-export type EvidenceStatus = "UNCHANGED" | "PASS" | "FAIL" | "BLOCKED";
+export type EvidenceStatus = "UNCHANGED" | "PASS/FAIL" | "PASS" | "FAIL";
 
 export interface PendingImage {
   base64: string;

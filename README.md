@@ -109,7 +109,7 @@ Some Microsoft 365 builds also expose **Upload My Add-in** directly.
 4. Choose Evidence Type.
 5. For Generic Screenshot, choose **Left (A:D)** or **Right (F:I)** and optionally enter dynamic Header.
 6. Focus task pane and press `Ctrl+V` after Windows Snipping Tool capture.
-7. Leave Status as `unchanged` unless explicit update is intended.
+7. Status loads from selected scenario row. Choose `unchanged`, `PASS/FAIL`, `PASS`, or `FAIL`; `unchanged` performs no workbook write.
 8. Select **Insert**.
 
 Changing selected row while already on `Summary` does not activate another worksheet. Use refresh icon after changing Summary row.
@@ -122,7 +122,7 @@ Test Type selection is stored in Excel workbook settings. A workbook without a s
 
 Worksheet names do not need a `TS` prefix. Task pane searches `A1:P12` for semantic labels such as `Test Case No`, `Condition`, and `Expected Result`, supporting horizontal or vertical layouts, multiline text, and data continuing through following rows. Numeric displayed IDs such as `11.0` remain text.
 
-On `Summary`, task pane finds Scenario ID column from its header instead of assuming column A, then resolves worksheet named by selected row. Blank, utility, incomplete, or ambiguous sheets safely show `Not loaded` and disable workbook actions.
+On `Summary`, task pane finds Scenario ID column from its header instead of assuming column A, then resolves worksheet named by selected row. Classification/title rows between headers and actual test data are ignored. Actual Test Case No, Condition, Expected Result, and Status stay bound to one row. Blank, utility, incomplete, or ambiguous sheets safely show `Not loaded` and disable workbook actions.
 
 Inserted image names follow:
 

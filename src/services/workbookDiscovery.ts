@@ -1,4 +1,4 @@
-import type { ScenarioContext } from "../types/evidence";
+import type { EvidenceStatus, ScenarioContext } from "../types/evidence";
 
 type ScenarioField = "scenarioId" | "condition" | "expectedResult";
 
@@ -19,7 +19,7 @@ const FIELD_ALIASES: Record<ScenarioField, readonly string[]> = {
 };
 
 const FIELDS = Object.keys(FIELD_ALIASES) as ScenarioField[];
-const STATUS_ALIASES = ["status", "test status", "result status"] as const;
+const STATUS_ALIASES = ["status", "test status", "result status", "pass/fail"] as const;
 const PROBE_COLUMN_COUNT = 16;
 const SCENARIO_PROBE_ROW_COUNT = 12;
 const SUMMARY_PROBE_ROW_COUNT = 10;
@@ -55,6 +55,17 @@ const fieldForLabel = (value: string): ScenarioField | null => {
   return null;
 };
 
+const isStatusLabel = (value: string): boolean =>
+  STATUS_ALIASES.includes(normalizeDiscoveryText(value) as (typeof STATUS_ALIASES)[number]);
+
+export const parseEvidenceStatus = (value: string | undefined): EvidenceStatus => {
+  const normalized = normalizeDiscoveryText(value ?? "");
+  if (normalized === "pass/fail") return "PASS/FAIL";
+  if (normalized === "pass") return "PASS";
+  if (normalized === "fail") return "FAIL";
+  return "UNCHANGED";
+};
+
 const inlineField = (value: string): { field: ScenarioField; value: string } | null => {
   const separator = /\s*[:\-]\s*/.exec(value);
   if (!separator || separator.index === 0) return null;
@@ -64,7 +75,8 @@ const inlineField = (value: string): { field: ScenarioField; value: string } | n
   return inlineValue ? { field, value: inlineValue } : null;
 };
 
-const rowContainsLabel = (row: readonly string[]): boolean => row.some((cell) => fieldForLabel(cell) !== null);
+const rowContainsLabel = (row: readonly string[]): boolean =>
+  row.some((cell) => fieldForLabel(cell) !== null || isStatusLabel(cell));
 
 const joinParts = (parts: readonly string[]): string => parts.filter(Boolean).join("\n");
 
@@ -83,7 +95,11 @@ const parseHorizontal = (
   text: readonly (readonly string[])[],
   worksheetName: string,
 ): ScenarioDiscovery | null => {
-  const headers: Array<{ rowIndex: number; columns: Record<ScenarioField, number> }> = [];
+  const headers: Array<{
+    rowIndex: number;
+    columns: Record<ScenarioField, number>;
+    statusColumn?: number;
+  }> = [];
 
   text.forEach((row, rowIndex) => {
     const matches: Record<ScenarioField, number[]> = {
@@ -95,6 +111,9 @@ const parseHorizontal = (
       const field = fieldForLabel(cell);
       if (field) matches[field].push(columnIndex);
     });
+    const statusColumns = row
+      .slice(0, PROBE_COLUMN_COUNT)
+      .flatMap((cell, columnIndex) => (isStatusLabel(cell) ? [columnIndex] : []));
     if (FIELDS.every((field) => matches[field].length === 1)) {
       headers.push({
         rowIndex,
@@ -103,6 +122,7 @@ const parseHorizontal = (
           condition: matches.condition[0],
           expectedResult: matches.expectedResult[0],
         },
+        statusColumn: statusColumns.length === 1 ? statusColumns[0] : undefined,
       });
     }
   });
@@ -112,6 +132,7 @@ const parseHorizontal = (
 
   const header = headers[0];
   const lastCandidateRow = Math.min(text.length - 1, header.rowIndex + DATA_ROW_LOOKAHEAD);
+  const candidates: ScenarioContext[] = [];
   for (let rowIndex = header.rowIndex + 1; rowIndex <= lastCandidateRow; rowIndex += 1) {
     const row = text[rowIndex] ?? [];
     const scenarioId = displayText(row[header.columns.scenarioId]);
@@ -136,27 +157,27 @@ const parseHorizontal = (
 
     const condition = joinParts(conditionParts);
     const expectedResult = joinParts(expectedParts);
-    if (!condition && !expectedResult) continue;
-    const statusColumns = (text[header.rowIndex] ?? [])
-      .slice(0, PROBE_COLUMN_COUNT)
-      .map((cell, columnIndex) => ({ cell: normalizeDiscoveryText(cell), columnIndex }))
-      .filter(({ cell }) => STATUS_ALIASES.includes(cell as (typeof STATUS_ALIASES)[number]));
-    return {
-      headerFound: true,
-      scenario: {
-        worksheetName,
-        scenarioId,
-        condition,
-        expectedResult,
-        statusCellAddress:
-          statusColumns.length === 1
-            ? `${columnName(statusColumns[0].columnIndex)}${rowIndex + 1}`
-            : undefined,
-      },
-    };
+    if (!condition || !expectedResult) continue;
+    candidates.push({
+      worksheetName,
+      scenarioId,
+      condition,
+      expectedResult,
+      status:
+        header.statusColumn === undefined
+          ? "UNCHANGED"
+          : parseEvidenceStatus(row[header.statusColumn]),
+      statusCellAddress:
+        header.statusColumn === undefined
+          ? undefined
+          : `${columnName(header.statusColumn)}${rowIndex + 1}`,
+    });
   }
 
-  return { scenario: null, headerFound: true };
+  return {
+    scenario: candidates.length === 1 ? candidates[0] : null,
+    headerFound: true,
+  };
 };
 
 const valueRightOf = (row: readonly string[], columnIndex: number): string => {
@@ -202,7 +223,7 @@ const parseVertical = (
         const condition = conditionLabel.value || valueRightOf(text[conditionLabel.row] ?? [], conditionLabel.column);
         const expectedResult = expectedLabel.value || valueRightOf(text[expectedLabel.row] ?? [], expectedLabel.column);
         if (!scenarioId || (!condition && !expectedResult)) continue;
-        candidates.push({ worksheetName, scenarioId, condition, expectedResult });
+        candidates.push({ worksheetName, scenarioId, condition, expectedResult, status: "UNCHANGED" });
       }
     }
   }

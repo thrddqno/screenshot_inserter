@@ -4,6 +4,7 @@ import {
   findSummaryScenarioColumn,
   isSummaryWorksheet,
   normalizeDiscoveryText,
+  parseEvidenceStatus,
 } from "./workbookDiscovery";
 
 describe("workbook scenario discovery", () => {
@@ -24,6 +25,7 @@ describe("workbook scenario discovery", () => {
       scenarioId: "11.0",
       condition: "Input exists",
       expectedResult: "Output created",
+      status: "UNCHANGED",
     });
   });
 
@@ -36,7 +38,27 @@ describe("workbook scenario discovery", () => {
       "TS4.1.2",
     );
     expect(result.scenario?.scenarioId).toBe("TS4.1.2");
+    expect(result.scenario?.status).toBe("PASS");
     expect(result.scenario?.statusCellAddress).toBe("D2");
+  });
+
+  it("skips classification row and binds all fields to actual scenario row", () => {
+    const result = discoverScenario(
+      [
+        ["Test Case No", "Condition", "Expected Result", "PASS/FAIL"],
+        ["6 Classification of\nSomething", "", "", ""],
+        ["TS6.1", "Actual condition", "Actual result", "fail"],
+      ],
+      "TS6.1",
+    );
+    expect(result.scenario).toEqual({
+      worksheetName: "TS6.1",
+      scenarioId: "TS6.1",
+      condition: "Actual condition",
+      expectedResult: "Actual result",
+      status: "FAIL",
+      statusCellAddress: "D3",
+    });
   });
 
   it("discovers row-two headers, row-three data, and continuation rows", () => {
@@ -89,6 +111,24 @@ describe("workbook scenario discovery", () => {
         "Ambiguous",
       ).scenario,
     ).toBeNull();
+    expect(
+      discoverScenario(
+        [
+          ["Test Case No", "Condition", "Expected Result", "Status"],
+          ["1", "A", "B", "PASS"],
+          ["2", "C", "D", "FAIL"],
+        ],
+        "Multiple Cases",
+      ).scenario,
+    ).toBeNull();
+  });
+
+  it("normalizes supported workbook Status values", () => {
+    expect(parseEvidenceStatus(" pass/fail ")).toBe("PASS/FAIL");
+    expect(parseEvidenceStatus("Pass")).toBe("PASS");
+    expect(parseEvidenceStatus("fail")).toBe("FAIL");
+    expect(parseEvidenceStatus("BLOCKED")).toBe("UNCHANGED");
+    expect(parseEvidenceStatus("")).toBe("UNCHANGED");
   });
 
   it("does not accept broad labels", () => {

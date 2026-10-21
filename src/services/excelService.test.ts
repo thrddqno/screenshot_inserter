@@ -301,9 +301,9 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "",
-      status: "PASS",
+      status: "PASS/FAIL",
     });
-    expect(host.semanticStatusRange.values).toEqual([["PASS"]]);
+    expect(host.semanticStatusRange.values).toEqual([["PASS/FAIL"]]);
     expect(host.statusRange.values).toEqual([["ORIGINAL"]]);
   });
 

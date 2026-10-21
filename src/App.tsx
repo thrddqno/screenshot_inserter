@@ -69,6 +69,7 @@ export default function App() {
       setEvidenceType(TEST_TYPE_PROFILES[testTypeIdRef.current].defaultModuleId);
       setCaption("");
       setGenericSide("left");
+      setStatus("UNCHANGED");
       setMessage({ kind: "info", text: "Loading test scenario…" });
     }
     if (refreshRunningRef.current) return;
@@ -88,14 +89,17 @@ export default function App() {
           setGenericSide("left");
           if (result.kind === "loaded") {
             setScenario(result.scenario);
+            setStatus(result.scenario.status ?? "UNCHANGED");
             setMessage({ kind: "success", text: `Loaded ${result.scenario.scenarioId}.` });
           } else {
             setScenario(null);
+            setStatus("UNCHANGED");
             setMessage({ kind: "info", text: "No test scenario loaded." });
           }
         } catch (error) {
           if (!mountedRef.current || generation !== refreshGenerationRef.current) continue;
           setScenario(null);
+          setStatus("UNCHANGED");
           setMessage({ kind: "error", text: errorMessage(error) });
         }
       }
@@ -434,9 +438,9 @@ export default function App() {
           <span>Status</span>
           <select disabled={busy} value={status} onChange={(event) => setStatus(event.target.value as EvidenceStatus)}>
             <option value="UNCHANGED">unchanged</option>
+            <option value="PASS/FAIL">PASS/FAIL</option>
             <option value="PASS">PASS</option>
             <option value="FAIL">FAIL</option>
-            <option value="BLOCKED">BLOCKED</option>
           </select>
         </label>
       </section>

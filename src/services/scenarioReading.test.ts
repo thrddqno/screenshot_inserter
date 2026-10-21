@@ -63,6 +63,30 @@ describe("scenario reading", () => {
         scenarioId: "11.0",
         condition: "Ready",
         expectedResult: "Completed",
+        status: "UNCHANGED",
+      },
+    });
+  });
+
+  it("skips classification row and reads PASS/FAIL status from actual row", async () => {
+    const active = sheet("TS6.1", {
+      "A1:P12": range([
+        ["Test Case No", "Condition", "Expected Result", "PASS/FAIL"],
+        ["6 Classification of Something", "", "", ""],
+        ["TS6.1", "Ready", "Completed", "Pass/Fail"],
+      ]),
+    });
+    installHost(active);
+
+    await expect(readCurrentScenario()).resolves.toEqual({
+      kind: "loaded",
+      scenario: {
+        worksheetName: "TS6.1",
+        scenarioId: "TS6.1",
+        condition: "Ready",
+        expectedResult: "Completed",
+        status: "PASS/FAIL",
+        statusCellAddress: "D3",
       },
     });
   });
