@@ -1,11 +1,17 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import * as excelService from "./services/excelService";
+import * as imageValidation from "./services/imageValidation";
+import * as updateService from "./services/updateService";
 import * as workbookPreferences from "./services/workbookPreferences";
 import type { ScenarioReadResult } from "./types/evidence";
 
 describe("task pane", () => {
+  beforeEach(() => {
+    vi.spyOn(updateService, "checkForAppUpdate").mockResolvedValue(null);
+  });
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -198,5 +204,49 @@ describe("task pane", () => {
       await scenarioPromise;
     });
     expect(refreshButton.querySelector("svg")).not.toHaveClass("is-spinning");
+  });
+
+  it("shows update notice and rechecks when window regains focus", async () => {
+    vi.stubGlobal("Office", undefined);
+    vi.stubGlobal("Excel", undefined);
+    vi.mocked(updateService.checkForAppUpdate).mockResolvedValue("abcdef123456");
+    const reload = vi.spyOn(updateService, "reloadToVersion").mockImplementation(() => undefined);
+
+    render(<App />);
+    const updateButton = await screen.findByRole("button", { name: "Update now" });
+    expect(screen.getByText("New version available.")).toBeVisible();
+    expect(updateButton).toBeEnabled();
+    fireEvent.click(updateButton);
+    expect(reload).toHaveBeenCalledWith("abcdef123456");
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(updateService.checkForAppUpdate).toHaveBeenCalledTimes(2));
+  });
+
+  it("blocks update while screenshot is pending", async () => {
+    vi.stubGlobal("Office", undefined);
+    vi.stubGlobal("Excel", undefined);
+    vi.stubGlobal("URL", { ...URL, revokeObjectURL: vi.fn() });
+    vi.mocked(updateService.checkForAppUpdate).mockResolvedValue("abcdef123456");
+    vi.spyOn(imageValidation, "getImageFromClipboard").mockResolvedValue({
+      base64: "iVBORw0KGgo=",
+      mimeType: "image/png",
+      size: 100,
+      width: 800,
+      height: 600,
+      previewUrl: "blob:pending",
+    });
+
+    render(<App />);
+    fireEvent.paste(document, {
+      clipboardData: { items: [{ kind: "file", type: "image/png" }] },
+    });
+
+    expect(await screen.findByAltText("Pending screenshot preview")).toBeVisible();
+    expect(screen.getByText("New version available. Insert or clear pending screenshot before updating.")).toBeVisible();
+    const updateButton = screen.getByRole("button", { name: "Update now" });
+    expect(updateButton).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Clear Pending" }));
+    expect(updateButton).toBeEnabled();
   });
 });

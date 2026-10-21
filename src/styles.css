@@ -92,6 +92,19 @@ input[type="text"], select {
 .message-error { background: #fde7e9; color: #a4262c; }
 .message-info { background: #f0f6fc; color: #0f548c; }
 .message-warning { background: #fff4ce; color: #8a4b08; }
+.update-notice {
+  align-items: center;
+  background: #fff4ce;
+  border: 1px solid #d6b656;
+  border-radius: 4px;
+  color: #5c3b00;
+  display: flex;
+  font-size: 13px;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 9px;
+}
+.update-notice .button { flex: 0 0 auto; }
 
 @media (min-width: 520px) {
   .actions { grid-template-columns: 1fr 1fr; }

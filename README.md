@@ -42,6 +42,8 @@ manifest.local.xml              Local HTTPS development manifest
 docs/                           GitHub Pages production bundle
 ```
 
+Task pane checks same-origin `version.json` at startup, when window regains focus, and every 15 minutes. New releases show an **Update now** notice. Reload stays user-controlled and is blocked while a screenshot is pending, preventing clipboard-image loss. No cookies, browser history, or Office authentication state are cleared.
+
 Every evidence module remains available in Evidence Type dropdown. Tester chooses module manually; no automatic suggestion or scenario classification runs.
 
 ## Requirements

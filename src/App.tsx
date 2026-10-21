@@ -14,6 +14,11 @@ import {
   readWorkbookPreferences,
   writeWorkbookPreferences,
 } from "./services/workbookPreferences";
+import {
+  checkForAppUpdate,
+  reloadToVersion,
+  UPDATE_CHECK_INTERVAL_MS,
+} from "./services/updateService";
 import type {
   EvidenceStatus,
   GenericSide,
@@ -40,6 +45,7 @@ export default function App() {
   const [operationBusy, setOperationBusy] = useState(false);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [preferenceWarning, setPreferenceWarning] = useState<string | null>(null);
+  const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>({ kind: "info", text: "Loading workbook settings…" });
   const mountedRef = useRef(false);
   const refreshRunningRef = useRef(false);
@@ -48,6 +54,7 @@ export default function App() {
   const testTypeIdRef = useRef<TestTypeId>(testTypeId);
   const requestedTestTypeRef = useRef<TestTypeId>(testTypeId);
   const preferenceWriteRunningRef = useRef(false);
+  const updateCheckRunningRef = useRef(false);
 
   const selectedProfile = TEST_TYPE_PROFILES[testTypeId];
   const availableModules = selectedProfile.moduleIds
@@ -173,6 +180,31 @@ export default function App() {
       if (unsubscribe) void unsubscribe().catch(() => undefined);
     };
   }, [refreshScenario]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const check = async () => {
+      if (updateCheckRunningRef.current) return;
+      updateCheckRunningRef.current = true;
+      try {
+        const nextVersion = await checkForAppUpdate(controller.signal);
+        if (!controller.signal.aborted) setAvailableVersion(nextVersion);
+      } catch {
+        // Update checks are best-effort and must not interrupt workbook work.
+      } finally {
+        updateCheckRunningRef.current = false;
+      }
+    };
+    const onFocus = () => void check();
+    void check();
+    window.addEventListener("focus", onFocus);
+    const interval = window.setInterval(check, UPDATE_CHECK_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   const acceptClipboard = useCallback(async (clipboardData: DataTransfer | null) => {
     setOperationBusy(true);
@@ -305,6 +337,24 @@ export default function App() {
           </svg>
         </button>
       </header>
+
+      {availableVersion ? (
+        <aside className="update-notice" role="status" aria-live="polite">
+          <span>
+            {pendingImage
+              ? "New version available. Insert or clear pending screenshot before updating."
+              : "New version available."}
+          </span>
+          <button
+            className="button button-primary"
+            type="button"
+            disabled={busy || Boolean(pendingImage)}
+            onClick={() => reloadToVersion(availableVersion)}
+          >
+            Update now
+          </button>
+        </aside>
+      ) : null}
 
       <section className="panel scenario-panel" aria-labelledby="scenario-heading">
         <h2 id="scenario-heading">Test Scenario</h2>
