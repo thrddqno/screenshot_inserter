@@ -1,6 +1,6 @@
 import { EVIDENCE_MODULES } from "../config/evidenceModules";
 import { LAYOUT_CONFIG } from "../config/layoutProfiles";
-import type { ModuleId, Placement } from "../types/evidence";
+import type { GenericSide, ModuleId, Placement } from "../types/evidence";
 
 export interface Rectangle {
   left: number;
@@ -22,6 +22,7 @@ export interface LayoutImage {
   naturalWidth: number;
   naturalHeight: number;
   caption: string;
+  side?: GenericSide;
 }
 
 export interface ImagePlacement extends Rectangle {
@@ -96,6 +97,29 @@ interface EvidenceGroup {
   images: LayoutImage[];
   genericHeading?: string;
 }
+
+interface GenericRow {
+  left?: LayoutImage;
+  right?: LayoutImage;
+}
+
+const buildGenericRows = (images: readonly LayoutImage[]): GenericRow[] => {
+  const rows: GenericRow[] = [];
+  let latestIncompleteRow: GenericRow | undefined;
+  for (const image of [...images].sort((a, b) => a.sequence - b.sequence)) {
+    const side = image.side ?? "left";
+    const oppositeSide: GenericSide = side === "left" ? "right" : "left";
+    if (latestIncompleteRow?.[oppositeSide] && !latestIncompleteRow[side]) {
+      latestIncompleteRow[side] = image;
+      latestIncompleteRow = undefined;
+      continue;
+    }
+    const row: GenericRow = { [side]: image };
+    rows.push(row);
+    latestIncompleteRow = row;
+  }
+  return rows;
+};
 
 const buildEvidenceGroups = (
   selectedModules: readonly ModuleId[],
@@ -197,6 +221,34 @@ export const buildLayout = ({
 
     const hasHeading = visibleHeadingModules.length > 0;
     let rowTop = headingTop + (hasHeading ? LAYOUT_CONFIG.headingHeight + LAYOUT_CONFIG.headingGap : 0);
+
+    if (group.moduleIds.length === 1 && group.moduleIds[0] === "GENERIC_SCREENSHOT") {
+      for (const row of buildGenericRows(group.images)) {
+        let rowHeight = 0;
+        for (const side of ["left", "right"] as const) {
+          const image = row[side];
+          if (!image) continue;
+          const anchor = anchors[side];
+          const size = fitImageToSlotWidth(image.naturalWidth, image.naturalHeight, anchor.width);
+          placements.push({
+            name: image.name,
+            moduleId: image.moduleId,
+            sequence: image.sequence,
+            groupKey: group.key,
+            left: anchor.left,
+            top: rowTop,
+            ...size,
+          });
+          rowHeight = Math.max(rowHeight, size.height);
+        }
+        rowTop += rowHeight + LAYOUT_CONFIG.itemGap;
+      }
+      cursorTop = Math.max(
+        rowTop,
+        headingTop + (hasHeading ? LAYOUT_CONFIG.headingHeight : 0),
+      ) + LAYOUT_CONFIG.groupGap;
+      continue;
+    }
 
     for (let index = 0; index < rowCount; index += 1) {
       let rowHeight = 0;

@@ -3,6 +3,7 @@ import { LAYOUT_CONFIG } from "../config/layoutProfiles";
 import { isTestTypeId, TEST_TYPE_PROFILES } from "../config/testTypeProfiles";
 import type {
   EvidenceStatus,
+  GenericSide,
   ModuleId,
   PendingImage,
   ScenarioContext,
@@ -23,7 +24,7 @@ import {
 const STATUS_VALUES = new Set<EvidenceStatus>(["UNCHANGED", "PASS", "FAIL", "BLOCKED"]);
 const DISCOVERED_STATUS_ADDRESS = /^[A-P](?:[1-9]|1[0-2])$/;
 const CAPTION_MAXIMUM_LENGTH = 500;
-const MANAGED_METADATA_VERSION = 2;
+const MANAGED_METADATA_VERSION = 3;
 
 interface ManagedHeadingMetadata {
   address: string;
@@ -34,8 +35,11 @@ interface ManagedShapeMetadata {
   version: number;
   testTypeId: TestTypeId;
   caption: string;
+  side?: GenericSide;
   heading?: ManagedHeadingMetadata;
 }
+
+const isGenericSide = (value: unknown): value is GenericSide => value === "left" || value === "right";
 
 const isManagedHeadingAddress = (value: unknown): value is string => {
   if (typeof value !== "string") return false;
@@ -53,7 +57,7 @@ const parseManagedMetadata = (
   try {
     const value = JSON.parse(description) as Partial<ManagedShapeMetadata>;
     if (
-      (value.version === 1 || value.version === MANAGED_METADATA_VERSION) &&
+      (value.version === 1 || value.version === 2 || value.version === MANAGED_METADATA_VERSION) &&
       typeof value.caption === "string" &&
       value.caption.length <= CAPTION_MAXIMUM_LENGTH
     ) {
@@ -65,6 +69,12 @@ const parseManagedMetadata = (
         version: MANAGED_METADATA_VERSION,
         testTypeId,
         caption: moduleId === "GENERIC_SCREENSHOT" ? value.caption : "",
+        side:
+          moduleId === "GENERIC_SCREENSHOT" && value.version === MANAGED_METADATA_VERSION && isGenericSide(value.side)
+            ? value.side
+            : moduleId === "GENERIC_SCREENSHOT"
+              ? "left"
+              : undefined,
         heading:
           heading &&
           isManagedHeadingAddress(heading.address) &&
@@ -87,6 +97,7 @@ const legacyManagedMetadata = (
     version: MANAGED_METADATA_VERSION,
     testTypeId: "SOA",
     caption: moduleId === "GENERIC_SCREENSHOT" ? description.slice(0, CAPTION_MAXIMUM_LENGTH) : "",
+    side: moduleId === "GENERIC_SCREENSHOT" ? "left" : undefined,
   });
 
 const hasManagedHeading = (moduleId: ModuleId, metadata: ManagedShapeMetadata): boolean => {
@@ -190,6 +201,7 @@ interface InsertEvidenceInput {
   moduleId: ModuleId;
   image: PendingImage;
   caption: string;
+  side?: GenericSide;
   status: EvidenceStatus;
 }
 
@@ -238,6 +250,7 @@ export const insertEvidence = async ({
   moduleId,
   image,
   caption,
+  side,
   status,
 }: InsertEvidenceInput): Promise<string> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
@@ -252,6 +265,10 @@ export const insertEvidence = async ({
     throw new ExcelServiceError("Evidence type is unavailable for selected test type.");
   }
   const effectiveCaption = moduleId === "GENERIC_SCREENSHOT" ? caption : "";
+  if (moduleId === "GENERIC_SCREENSHOT" && side !== undefined && !isGenericSide(side)) {
+    throw new ExcelServiceError("Invalid Generic Screenshot side.");
+  }
+  const effectiveSide: GenericSide = moduleId === "GENERIC_SCREENSHOT" ? side ?? "left" : "left";
   if (effectiveCaption.length > CAPTION_MAXIMUM_LENGTH) {
     throw new ExcelServiceError(`Caption exceeds ${CAPTION_MAXIMUM_LENGTH} characters.`);
   }
@@ -303,6 +320,7 @@ export const insertEvidence = async ({
           naturalWidth: shape.width,
           naturalHeight: shape.height,
           caption: metadata.caption,
+          side: metadata.side,
         });
       }
 
@@ -313,11 +331,13 @@ export const insertEvidence = async ({
         naturalWidth: image.width * 0.75,
         naturalHeight: image.height * 0.75,
         caption: effectiveCaption,
+        side: effectiveSide,
       });
       metadataByName.set(createdImageName, {
         version: MANAGED_METADATA_VERSION,
         testTypeId,
         caption: effectiveCaption,
+        side: moduleId === "GENERIC_SCREENSHOT" ? effectiveSide : undefined,
       });
       modulesWithImages.add(moduleId);
 
@@ -431,6 +451,7 @@ export const insertEvidence = async ({
           version: MANAGED_METADATA_VERSION,
           testTypeId,
           caption: layoutImage?.caption ?? "",
+          side: placement.moduleId === "GENERIC_SCREENSHOT" ? layoutImage?.side ?? "left" : undefined,
           heading: headingByGroupAndModule.get(`${placement.groupKey}|${placement.moduleId}`),
         } satisfies ManagedShapeMetadata);
       }

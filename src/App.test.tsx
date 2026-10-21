@@ -32,6 +32,9 @@ describe("task pane", () => {
     const evidenceType = screen.getByLabelText("Evidence Type");
     expect(evidenceType.querySelectorAll("option")).toHaveLength(1);
     expect(evidenceType).toHaveValue("GENERIC_SCREENSHOT");
+    expect(screen.getByLabelText("Side")).toHaveValue("left");
+    expect(screen.getByRole("option", { name: "Left (A:D)" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Right (F:I)" })).toBeVisible();
     expect(screen.getByLabelText("Header")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("Open this page inside an Excel task pane.");
   });
@@ -66,10 +69,12 @@ describe("task pane", () => {
     expect(await screen.findByText("TS4.1.1")).toBeVisible();
     expect(screen.getByLabelText("Test Type")).toHaveValue("SOA");
     expect(screen.getByLabelText("Evidence Type")).toContainHTML("Retailer Statement Duplicate");
+    fireEvent.change(screen.getByLabelText("Side"), { target: { value: "right" } });
     await act(async () => {
       await activationHandler?.({ worksheetId: "sheet-2", type: "WorksheetActivated" });
     });
     expect(await screen.findByText("TS4.25.1")).toBeVisible();
+    expect(screen.getByLabelText("Side")).toHaveValue("left");
     expect(excelService.readCurrentScenario).toHaveBeenCalledTimes(2);
   });
 
@@ -111,6 +116,13 @@ describe("task pane", () => {
 
     expect(screen.getByLabelText("Evidence Type")).toContainHTML("Retailer Statement Duplicate");
     expect(writePreferences).toHaveBeenCalledWith("SOA");
+
+    const evidenceType = screen.getByLabelText("Evidence Type");
+    fireEvent.change(screen.getByLabelText("Side"), { target: { value: "right" } });
+    fireEvent.change(evidenceType, { target: { value: "PDF_PAPER" } });
+    expect(screen.queryByLabelText("Side")).not.toBeInTheDocument();
+    fireEvent.change(evidenceType, { target: { value: "GENERIC_SCREENSHOT" } });
+    expect(screen.getByLabelText("Side")).toHaveValue("left");
   });
 
   it("serializes rapid Test Type saves so latest choice wins", async () => {

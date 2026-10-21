@@ -16,6 +16,7 @@ export type ModuleId = (typeof MODULE_IDS)[number];
 export const TEST_TYPE_IDS = ["GENERAL", "SOA"] as const;
 export type TestTypeId = (typeof TEST_TYPE_IDS)[number];
 export type Placement = "full" | "left" | "right";
+export type GenericSide = "left" | "right";
 
 export interface TestTypeProfile {
   id: TestTypeId;

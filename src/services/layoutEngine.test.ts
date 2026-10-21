@@ -172,6 +172,79 @@ describe("buildLayout", () => {
     expect(plan.images[1].top).toBeGreaterThan(plan.images[0].top + plan.images[0].height);
   });
 
+  it.each([
+    ["left", "right"],
+    ["right", "left"],
+  ] as const)("pairs consecutive Generic %s then %s screenshots", (firstSide, secondSide) => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT"],
+      images: [
+        { name: "first", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "Pair", side: firstSide },
+        { name: "second", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 300, caption: "Pair", side: secondSide },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+    const first = plan.images.find((item) => item.name === "first")!;
+    const second = plan.images.find((item) => item.name === "second")!;
+    expect(first.top).toBe(second.top);
+    expect(plan.images.find((item) => item.name === (firstSide === "left" ? "first" : "second"))).toMatchObject({ left: 0, width: 400 });
+    expect(plan.images.find((item) => item.name === (firstSide === "right" ? "first" : "second"))).toMatchObject({ left: 420, width: 400 });
+  });
+
+  it("starts a new row for same-side Generic images then pairs latest incomplete row", () => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT"],
+      images: [
+        { name: "left-1", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "Pair", side: "left" },
+        { name: "left-2", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 200, caption: "Pair", side: "left" },
+        { name: "right-3", moduleId: "GENERIC_SCREENSHOT", sequence: 3, naturalWidth: 400, naturalHeight: 300, caption: "Pair", side: "right" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+    const left1 = plan.images.find((item) => item.name === "left-1")!;
+    const left2 = plan.images.find((item) => item.name === "left-2")!;
+    const right3 = plan.images.find((item) => item.name === "right-3")!;
+    expect(left2.top).toBeGreaterThan(left1.top + left1.height);
+    expect(left2.top).toBe(right3.top);
+  });
+
+  it("uses taller Generic pair image to position next row", () => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT"],
+      images: [
+        { name: "tall-left", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 800, caption: "Pair", side: "left" },
+        { name: "short-right", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 200, caption: "Pair", side: "right" },
+        { name: "next-left", moduleId: "GENERIC_SCREENSHOT", sequence: 3, naturalWidth: 400, naturalHeight: 200, caption: "Pair", side: "left" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+    const tall = plan.images.find((item) => item.name === "tall-left")!;
+    const next = plan.images.find((item) => item.name === "next-left")!;
+    expect(next.top).toBeGreaterThan(tall.top + tall.height);
+  });
+
+  it("never pairs Generic screenshots from different exact Header groups", () => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT"],
+      images: [
+        { name: "a-left", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "A", side: "left" },
+        { name: "b-right", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 200, caption: "B", side: "right" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+    const a = plan.images.find((item) => item.name === "a-left")!;
+    const b = plan.images.find((item) => item.name === "b-right")!;
+    expect(b.top).toBeGreaterThan(a.top + a.height);
+  });
+
   it("keeps Generic captions case- and whitespace-sensitive", () => {
     const captions = ["Login", "login", " Login"];
     const plan = buildLayout({

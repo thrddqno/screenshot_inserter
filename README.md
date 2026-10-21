@@ -105,7 +105,7 @@ Some Microsoft 365 builds also expose **Upload My Add-in** directly.
 2. Task pane refreshes automatically when worksheet tab changes. Use refresh icon if needed.
 3. Choose Test Type: `General` provides only Generic Screenshot; `SOA` provides all SOA evidence types.
 4. Choose Evidence Type.
-5. For Generic Screenshot, optionally enter dynamic Header.
+5. For Generic Screenshot, choose **Left (A:D)** or **Right (F:I)** and optionally enter dynamic Header.
 6. Focus task pane and press `Ctrl+V` after Windows Snipping Tool capture.
 7. Leave Status as `unchanged` unless explicit update is intended.
 8. Select **Insert**.
@@ -148,6 +148,15 @@ Generic Screenshot groups use exact Header matching:
 - Empty values add to most recently used Generic group without creating a header
 - Empty value with no previous Generic group creates an unheaded group
 - Matching images stack vertically without screenshot-count limits
+
+Generic Screenshot Side is explicit per insertion:
+
+- Left fills `A:D`; Right fills `F:I`
+- Consecutive opposite sides in the same exact Header group share one row
+- Consecutive same-side images start separate rows
+- Taller paired image determines where the next row begins
+- Existing Generic screenshots without Side metadata migrate to Left
+- Side defaults to Left and resets after Test Type, Evidence Type, or scenario changes
 
 ## Test
 

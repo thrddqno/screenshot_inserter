@@ -16,6 +16,7 @@ import {
 } from "./services/workbookPreferences";
 import type {
   EvidenceStatus,
+  GenericSide,
   ModuleId,
   PendingImage,
   ScenarioContext,
@@ -32,6 +33,7 @@ export default function App() {
   const [testTypeId, setTestTypeId] = useState<TestTypeId>("GENERAL");
   const [evidenceType, setEvidenceType] = useState<ModuleId>("GENERIC_SCREENSHOT");
   const [caption, setCaption] = useState("");
+  const [genericSide, setGenericSide] = useState<GenericSide>("left");
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const [status, setStatus] = useState<EvidenceStatus>("UNCHANGED");
   const [refreshing, setRefreshing] = useState(false);
@@ -59,6 +61,7 @@ export default function App() {
       setScenario(null);
       setEvidenceType(TEST_TYPE_PROFILES[testTypeIdRef.current].defaultModuleId);
       setCaption("");
+      setGenericSide("left");
       setMessage({ kind: "info", text: "Loading test scenario…" });
     }
     if (refreshRunningRef.current) return;
@@ -75,6 +78,7 @@ export default function App() {
           if (!mountedRef.current || generation !== refreshGenerationRef.current) continue;
           setEvidenceType(TEST_TYPE_PROFILES[testTypeIdRef.current].defaultModuleId);
           setCaption("");
+          setGenericSide("left");
           if (result.kind === "loaded") {
             setScenario(result.scenario);
             setMessage({ kind: "success", text: `Loaded ${result.scenario.scenarioId}.` });
@@ -142,6 +146,7 @@ export default function App() {
         requestedTestTypeRef.current = restoredTestTypeId;
         setTestTypeId(restoredTestTypeId);
         setEvidenceType(TEST_TYPE_PROFILES[restoredTestTypeId].defaultModuleId);
+        setGenericSide("left");
         setPreferencesLoaded(true);
 
         try {
@@ -229,6 +234,7 @@ export default function App() {
         moduleId: evidenceType,
         image: pendingImage,
         caption: evidenceType === "GENERIC_SCREENSHOT" ? caption : "",
+        side: evidenceType === "GENERIC_SCREENSHOT" ? genericSide : undefined,
         status,
       });
       URL.revokeObjectURL(pendingImage.previewUrl);
@@ -276,6 +282,7 @@ export default function App() {
                 setTestTypeId(nextTestTypeId);
                 setEvidenceType(TEST_TYPE_PROFILES[nextTestTypeId].defaultModuleId);
                 setCaption("");
+                setGenericSide("left");
                 void persistTestType(nextTestTypeId);
               }}
             >
@@ -325,24 +332,40 @@ export default function App() {
             onChange={(event) => {
               const nextType = event.target.value as ModuleId;
               setEvidenceType(nextType);
-              if (nextType !== "GENERIC_SCREENSHOT") setCaption("");
+              if (nextType !== "GENERIC_SCREENSHOT") {
+                setCaption("");
+                setGenericSide("left");
+              }
             }}
           >
             {availableModules.map((module) => <option value={module.id} key={module.id}>{module.displayName}</option>)}
           </select>
         </label>
         {evidenceType === "GENERIC_SCREENSHOT" ? (
-          <label className="field">
-            <span>Header</span>
-            <input
-              type="text"
-              value={caption}
-              maxLength={500}
-              disabled={busy}
-              onChange={(event) => setCaption(event.target.value)}
-              placeholder="Dynamic evidence header (optional)"
-            />
-          </label>
+          <>
+            <label className="field">
+              <span>Side</span>
+              <select
+                value={genericSide}
+                disabled={busy}
+                onChange={(event) => setGenericSide(event.target.value as GenericSide)}
+              >
+                <option value="left">Left (A:D)</option>
+                <option value="right">Right (F:I)</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Header</span>
+              <input
+                type="text"
+                value={caption}
+                maxLength={500}
+                disabled={busy}
+                onChange={(event) => setCaption(event.target.value)}
+                placeholder="Dynamic evidence header (optional)"
+              />
+            </label>
+          </>
         ) : null}
         <div className={`paste-zone ${pendingImage ? "has-image" : ""}`} tabIndex={0} aria-label="Screenshot paste area">
           {pendingImage ? (

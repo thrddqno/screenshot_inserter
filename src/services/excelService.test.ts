@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModuleId, PendingImage, ScenarioContext } from "../types/evidence";
+import type { GenericSide, ModuleId, PendingImage, ScenarioContext } from "../types/evidence";
 import {
   insertEvidence,
   removeLastInsertedEvidence,
@@ -207,9 +207,44 @@ describe("Excel evidence service", () => {
     const inserted = host.items.find((shape) => shape.name === name)!;
     expect(inserted).toMatchObject({ left: 0, width: 400, height: 500, lockAspectRatio: true });
     expect(JSON.parse(inserted.altTextDescription ?? "{}")).toMatchObject({
-      version: 2,
+      version: 3,
       testTypeId: "SOA",
+      side: "left",
     });
+  });
+
+  it("places Generic screenshots on selected side and pairs consecutive opposites", async () => {
+    const host = createHost();
+    const leftName = await insertEvidence({
+      scenario,
+      testTypeId: "GENERAL",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "Pair",
+      side: "left",
+      status: "UNCHANGED",
+    });
+    const left = host.items.find((shape) => shape.name === leftName)!;
+    const originalTop = left.top;
+
+    const rightName = await insertEvidence({
+      scenario,
+      testTypeId: "GENERAL",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "",
+      side: "right",
+      status: "UNCHANGED",
+    });
+    const right = host.items.find((shape) => shape.name === rightName)!;
+
+    expect(left).toMatchObject({ left: 0, width: 400, top: originalTop });
+    expect(right).toMatchObject({ left: 420, width: 400, top: originalTop });
+    expect(JSON.parse(right.altTextDescription ?? "{}").side).toBe("right");
+
+    await expect(removeLastInsertedEvidence(scenario, "GENERAL")).resolves.toBe(rightName);
+    expect(right.delete).toHaveBeenCalledOnce();
+    expect(left.delete).not.toHaveBeenCalled();
   });
 
   it("stores General Generic screenshots separately from SOA", async () => {
@@ -305,10 +340,66 @@ describe("Excel evidence service", () => {
     });
 
     expect(JSON.parse(legacyManaged.altTextDescription ?? "{}")).toMatchObject({
-      version: 2,
+      version: 3,
       testTypeId: "SOA",
       caption: "Legacy Header",
+      side: "left",
     });
+  });
+
+  it("migrates version-two Generic metadata to Left", async () => {
+    const host = createHost();
+    const legacyManaged = createShape("EV__TS4_1_1__GENERIC_SCREENSHOT__001", {
+      top: 520,
+      altTextDescription: JSON.stringify({
+        version: 2,
+        testTypeId: "GENERAL",
+        caption: "Legacy General",
+      }),
+    });
+    host.items.push(legacyManaged);
+
+    await insertEvidence({
+      scenario,
+      testTypeId: "GENERAL",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "",
+      side: "right",
+      status: "UNCHANGED",
+    });
+
+    expect(JSON.parse(legacyManaged.altTextDescription ?? "{}")).toMatchObject({
+      version: 3,
+      testTypeId: "GENERAL",
+      side: "left",
+    });
+  });
+
+  it("defaults invalid Generic side metadata to Left", async () => {
+    const host = createHost();
+    const invalidSide = createShape("EV__TS4_1_1__GENERIC_SCREENSHOT__001", {
+      top: 520,
+      altTextDescription: JSON.stringify({
+        version: 3,
+        testTypeId: "GENERAL",
+        caption: "Invalid Side",
+        side: "middle",
+      }),
+    });
+    host.items.push(invalidSide);
+
+    await insertEvidence({
+      scenario,
+      testTypeId: "GENERAL",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "",
+      side: "right",
+      status: "UNCHANGED",
+    });
+
+    expect(JSON.parse(invalidSide.altTextDescription ?? "{}").side).toBe("left");
   });
 
   it("pairs sequential PDF and AFP insertions and removes only latest managed image", async () => {
@@ -340,7 +431,7 @@ describe("Excel evidence service", () => {
     expect(host.items.filter((shape) => shape.name.startsWith("EV__TS4_1_1__INVOICING__"))).toHaveLength(2);
   });
 
-  it("keeps blank-header Generic group fixed after repeated insertions", async () => {
+  it.each<GenericSide>(["left", "right"])("keeps blank-header Generic %s group fixed after repeated insertions", async (side) => {
     const host = createHost();
     const tallImage = { ...image, width: 300, height: 1200 };
     const insertBlank = () =>
@@ -350,6 +441,7 @@ describe("Excel evidence service", () => {
         moduleId: "GENERIC_SCREENSHOT",
         image: tallImage,
         caption: "",
+        side,
         status: "UNCHANGED",
       });
 
@@ -360,7 +452,7 @@ describe("Excel evidence service", () => {
     await insertBlank();
 
     expect(first.top).toBe(originalTop);
-    expect(first).toMatchObject({ width: 400, height: 1600 });
+    expect(first).toMatchObject({ left: side === "left" ? 0 : 420, width: 400, height: 1600 });
     expect(first.top).toBeGreaterThanOrEqual(host.legacyShape.top + host.legacyShape.height);
   });
 
