@@ -2,31 +2,6 @@
 
 Proof-of-concept Excel task-pane add-in. Organizes screenshots after tester manually executes and validates tests.
 
-Milestone scope:
-
-- Normal SOA layout represented by `TS4.1.1`
-- Paperless layout represented by `TS4.25.1`
-- No scenario classification from `.1`, `.2`, or `.3` suffixes
-- No backend or external screenshot upload
-
-## Safety first
-
-Never open reference workbook for write testing. Create working copy:
-
-```bash
-cp --reflink=auto \
-  '/home/adioquino/Downloads/CHG0038673_Test Results_SOA_RN4.0.xlsx' \
-  '/tmp/opencode/CHG0038673_Test Results_SOA_RN4.0-POC.xlsx'
-```
-
-Reference SHA-256 at inspection time:
-
-```text
-6a1c92ae48bb019e248aad1b492fab26c71ebc66c8aa5f5223f1ec1728868aaa
-```
-
-Workbook files are ignored by `.gitignore`.
-
 ## Architecture
 
 ```text
