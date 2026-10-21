@@ -5,7 +5,12 @@ import * as excelService from "./services/excelService";
 import * as imageValidation from "./services/imageValidation";
 import * as updateService from "./services/updateService";
 import * as workbookPreferences from "./services/workbookPreferences";
-import type { ScenarioReadResult } from "./types/evidence";
+import type { ScenarioReadResult, TestTypeId } from "./types/evidence";
+
+const preferences = (testTypeId: TestTypeId) => ({
+  ...structuredClone(workbookPreferences.DEFAULT_WORKBOOK_PREFERENCES),
+  testTypeId,
+});
 
 describe("task pane", () => {
   beforeEach(() => {
@@ -68,8 +73,9 @@ describe("task pane", () => {
     let activationHandler: excelService.WorksheetActivatedHandler | undefined;
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
     vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
-      preferences: { version: 1, testTypeId: "SOA" },
+      preferences: preferences("SOA"),
     });
+    vi.spyOn(workbookPreferences, "writeWorkbookPreferences").mockResolvedValue(undefined);
     vi.spyOn(excelService, "readCurrentScenario")
       .mockResolvedValueOnce({ kind: "loaded", scenario: first })
       .mockResolvedValueOnce({ kind: "loaded", scenario: second });
@@ -84,11 +90,13 @@ describe("task pane", () => {
     expect(screen.getByLabelText("Status")).toHaveValue("PASS");
     expect(screen.getByLabelText("Evidence Type")).toContainHTML("Retailer Statement Duplicate");
     fireEvent.change(screen.getByLabelText("Side"), { target: { value: "right" } });
+    fireEvent.change(screen.getByLabelText("Header"), { target: { value: "Keep Header" } });
     await act(async () => {
       await activationHandler?.({ worksheetId: "sheet-2", type: "WorksheetActivated" });
     });
     expect(await screen.findByText("TS4.25.1")).toBeVisible();
-    expect(screen.getByLabelText("Side")).toHaveValue("left");
+    expect(screen.getByLabelText("Side")).toHaveValue("right");
+    expect(screen.getByLabelText("Header")).toHaveValue("Keep Header");
     expect(screen.getByLabelText("Status")).toHaveValue("FAIL");
     expect(excelService.readCurrentScenario).toHaveBeenCalledTimes(2);
   });
@@ -96,7 +104,7 @@ describe("task pane", () => {
   it("shows neutral Not loaded state for utility sheets", async () => {
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
     vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
-      preferences: { version: 1, testTypeId: "GENERAL" },
+      preferences: preferences("GENERAL"),
     });
     vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
     vi.spyOn(excelService, "readCurrentScenario").mockResolvedValue({
@@ -111,10 +119,42 @@ describe("task pane", () => {
     expect(screen.getByRole("button", { name: "Insert" })).toBeDisabled();
   });
 
-  it("persists Test Type changes and updates available evidence", async () => {
+  it("hydrates saved form choices before scenario Status loads", async () => {
+    const savedPreferences = preferences("SOA");
+    savedPreferences.status = "FAIL";
+    savedPreferences.profiles.SOA = {
+      evidenceType: "GENERIC_SCREENSHOT",
+      genericSide: "right",
+      header: "Saved Header",
+    };
+    vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
+    vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({ preferences: savedPreferences });
+    vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
+    vi.spyOn(excelService, "readCurrentScenario").mockResolvedValue({
+      kind: "loaded",
+      scenario: {
+        worksheetName: "TS6.1",
+        scenarioId: "TS6.1",
+        condition: "Condition",
+        expectedResult: "Result",
+        status: "UNCHANGED",
+        statusCellAddress: "D3",
+      },
+    });
+
+    render(<App />);
+    await screen.findByText("TS6.1");
+    expect(screen.getByLabelText("Test Type")).toHaveValue("SOA");
+    expect(screen.getByLabelText("Evidence Type")).toHaveValue("GENERIC_SCREENSHOT");
+    expect(screen.getByLabelText("Side")).toHaveValue("right");
+    expect(screen.getByLabelText("Header")).toHaveValue("Saved Header");
+    expect(screen.getByLabelText("Status")).toHaveValue("FAIL");
+  });
+
+  it("persists and restores separate form choices for each Test Type", async () => {
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
     vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
-      preferences: { version: 1, testTypeId: "GENERAL" },
+      preferences: preferences("GENERAL"),
     });
     const writePreferences = vi
       .spyOn(workbookPreferences, "writeWorkbookPreferences")
@@ -128,18 +168,31 @@ describe("task pane", () => {
     render(<App />);
     await screen.findByText("No test scenario loaded.");
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "PASS/FAIL" } });
+    fireEvent.change(screen.getByLabelText("Side"), { target: { value: "right" } });
+    fireEvent.change(screen.getByLabelText("Header"), { target: { value: "General Header" } });
     fireEvent.change(screen.getByLabelText("Test Type"), { target: { value: "SOA" } });
 
     expect(screen.getByLabelText("Evidence Type")).toContainHTML("Retailer Statement Duplicate");
     expect(screen.getByLabelText("Status")).toHaveValue("PASS/FAIL");
-    expect(writePreferences).toHaveBeenCalledWith("SOA");
+    expect(screen.getByLabelText("Side")).toHaveValue("left");
+    expect(screen.getByLabelText("Header")).toHaveValue("");
+    await waitFor(() => expect(writePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ version: 2, testTypeId: "SOA", status: "PASS/FAIL" }),
+    ));
 
     const evidenceType = screen.getByLabelText("Evidence Type");
-    fireEvent.change(screen.getByLabelText("Side"), { target: { value: "right" } });
     fireEvent.change(evidenceType, { target: { value: "PDF_PAPER" } });
     expect(screen.queryByLabelText("Side")).not.toBeInTheDocument();
-    fireEvent.change(evidenceType, { target: { value: "GENERIC_SCREENSHOT" } });
-    expect(screen.getByLabelText("Side")).toHaveValue("left");
+    fireEvent.change(screen.getByLabelText("Test Type"), { target: { value: "GENERAL" } });
+    expect(screen.getByLabelText("Evidence Type")).toHaveValue("GENERIC_SCREENSHOT");
+    expect(screen.getByLabelText("Side")).toHaveValue("right");
+    expect(screen.getByLabelText("Header")).toHaveValue("General Header");
+    fireEvent.click(screen.getByRole("button", { name: "Clear Header" }));
+    expect(screen.getByLabelText("Header")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Clear Header" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Test Type"), { target: { value: "SOA" } });
+    expect(screen.getByLabelText("Evidence Type")).toHaveValue("PDF_PAPER");
   });
 
   it("reloads workbook Status during manual scenario refresh", async () => {
@@ -150,19 +203,65 @@ describe("task pane", () => {
       expectedResult: "Result",
     };
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
-    vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
-      preferences: { version: 1, testTypeId: "GENERAL" },
-    });
+    const savedPreferences = preferences("GENERAL");
+    savedPreferences.status = "FAIL";
+    vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({ preferences: savedPreferences });
     vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
     vi.spyOn(excelService, "readCurrentScenario")
       .mockResolvedValueOnce({ kind: "loaded", scenario: { ...scenario, status: "PASS" } })
-      .mockResolvedValueOnce({ kind: "loaded", scenario: { ...scenario, status: "PASS/FAIL" } });
+      .mockResolvedValueOnce({ kind: "loaded", scenario: { ...scenario, status: "PASS/FAIL" } })
+      .mockResolvedValueOnce({ kind: "loaded", scenario: { ...scenario, status: "UNCHANGED" } });
 
     render(<App />);
     expect(await screen.findByText("TS6.1")).toBeVisible();
     expect(screen.getByLabelText("Status")).toHaveValue("PASS");
     fireEvent.click(screen.getByRole("button", { name: "Refresh test scenario" }));
     await waitFor(() => expect(screen.getByLabelText("Status")).toHaveValue("PASS/FAIL"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh test scenario" }));
+    await waitFor(() => expect(screen.getByLabelText("Status")).toHaveValue("FAIL"));
+  });
+
+  it("keeps Header after successful insertion", async () => {
+    vi.stubGlobal("URL", { ...URL, revokeObjectURL: vi.fn() });
+    vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
+    vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
+      preferences: preferences("GENERAL"),
+    });
+    vi.spyOn(workbookPreferences, "writeWorkbookPreferences").mockResolvedValue(undefined);
+    vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
+    vi.spyOn(excelService, "readCurrentScenario").mockResolvedValue({
+      kind: "loaded",
+      scenario: {
+        worksheetName: "TS6.1",
+        scenarioId: "TS6.1",
+        condition: "Condition",
+        expectedResult: "Result",
+        status: "PASS",
+        statusCellAddress: "D3",
+      },
+    });
+    const insert = vi.spyOn(excelService, "insertEvidence").mockResolvedValue("EV__TS6_1__GENERIC_SCREENSHOT__001");
+    vi.spyOn(imageValidation, "getImageFromClipboard").mockResolvedValue({
+      base64: "iVBORw0KGgo=",
+      mimeType: "image/png",
+      size: 100,
+      width: 800,
+      height: 600,
+      previewUrl: "blob:pending",
+    });
+
+    render(<App />);
+    await screen.findByText("TS6.1");
+    fireEvent.change(screen.getByLabelText("Header"), { target: { value: "Persistent Header" } });
+    fireEvent.paste(document, {
+      clipboardData: { items: [{ kind: "file", type: "image/png" }] },
+    });
+    await screen.findByAltText("Pending screenshot preview");
+    fireEvent.click(screen.getByRole("button", { name: "Insert" }));
+
+    await screen.findByText("Inserted EV__TS6_1__GENERIC_SCREENSHOT__001.");
+    expect(screen.getByLabelText("Header")).toHaveValue("Persistent Header");
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ caption: "Persistent Header" }));
   });
 
   it("serializes rapid Test Type saves so latest choice wins", async () => {
@@ -172,7 +271,7 @@ describe("task pane", () => {
     });
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
     vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
-      preferences: { version: 1, testTypeId: "GENERAL" },
+      preferences: preferences("GENERAL"),
     });
     const writePreferences = vi
       .spyOn(workbookPreferences, "writeWorkbookPreferences")
@@ -191,14 +290,16 @@ describe("task pane", () => {
     fireEvent.change(testType, { target: { value: "GENERAL" } });
     await act(async () => resolveFirstWrite());
 
-    await waitFor(() => expect(writePreferences).toHaveBeenLastCalledWith("GENERAL"));
+    await waitFor(() => expect(writePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ testTypeId: "GENERAL" }),
+    ));
     expect(testType).toHaveValue("GENERAL");
   });
 
   it("keeps session Test Type when workbook preference save fails", async () => {
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
     vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
-      preferences: { version: 1, testTypeId: "GENERAL" },
+      preferences: preferences("GENERAL"),
     });
     vi.spyOn(workbookPreferences, "writeWorkbookPreferences").mockRejectedValue(new Error("denied"));
     vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
@@ -214,7 +315,7 @@ describe("task pane", () => {
 
     expect(testType).toHaveValue("SOA");
     expect(
-      await screen.findByText("Test type changed for this session but could not be saved to the workbook."),
+      await screen.findByText("Form choices changed for this session but could not be saved to the workbook."),
     ).toBeVisible();
   });
 
@@ -225,7 +326,7 @@ describe("task pane", () => {
     });
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
     vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
-      preferences: { version: 1, testTypeId: "GENERAL" },
+      preferences: preferences("GENERAL"),
     });
     vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
     vi.spyOn(excelService, "readCurrentScenario").mockReturnValue(scenarioPromise);

@@ -116,7 +116,7 @@ Changing selected row while already on `Summary` does not activate another works
 
 Images are appended below all existing non-add-in shapes. Existing `Picture N` objects are not moved, renamed, or deleted.
 
-Test Type selection is stored in Excel workbook settings. A workbook without a saved choice defaults to `General`. Changing Test Type keeps pending screenshot and Status, resets Evidence Type to that profile's default, and clears Header. General and SOA evidence are isolated: one profile does not reflow or remove another profile's images.
+Test Type, Status, and each profile's last Evidence Type, Generic Side, and Header are stored in Excel workbook settings. A workbook without saved choices defaults to `General`. Changing Test Type restores that profile's choices while keeping pending screenshot and Status. Scenario refresh preserves Evidence Type, Side, and Header; recognized worksheet Status takes precedence. General and SOA evidence are isolated: one profile does not reflow or remove another profile's images.
 
 ### Test Scenario discovery
 
@@ -158,7 +158,8 @@ Generic Screenshot Side is explicit per insertion:
 - Consecutive same-side images start separate rows
 - Taller paired image determines where the next row begins
 - Existing Generic screenshots without Side metadata migrate to Left
-- Side defaults to Left and resets after Test Type, Evidence Type, or scenario changes
+- Side defaults to Left, then persists separately for General and SOA
+- Header remains after insertion; use compact **Clear** button to remove and persist an empty Header
 
 ## Test
 

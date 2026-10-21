@@ -44,6 +44,9 @@ summary { cursor: pointer; font-weight: 600; }
 
 .field { display: grid; gap: 4px; margin-bottom: 10px; }
 .field > span { font-size: 13px; font-weight: 600; }
+.header-input-row { display: flex; gap: 6px; }
+.header-input-row input { flex: 1 1 auto; min-width: 0; }
+.clear-header-button { flex: 0 0 auto; min-height: 32px; padding-inline: 8px; }
 input[type="text"], select {
   width: 100%;
   border: 1px solid #8a8886;

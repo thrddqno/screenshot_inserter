@@ -11,7 +11,9 @@ import {
 } from "./services/excelService";
 import { getImageFromClipboard, ImageValidationError } from "./services/imageValidation";
 import {
+  DEFAULT_WORKBOOK_PREFERENCES,
   readWorkbookPreferences,
+  type WorkbookPreferences,
   writeWorkbookPreferences,
 } from "./services/workbookPreferences";
 import {
@@ -29,6 +31,7 @@ import type {
 } from "./types/evidence";
 
 type Message = { kind: "success" | "error" | "info"; text: string } | null;
+const HEADER_PERSIST_DELAY_MS = 400;
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Unexpected error occurred.";
@@ -51,9 +54,10 @@ export default function App() {
   const refreshRunningRef = useRef(false);
   const refreshQueuedRef = useRef(false);
   const refreshGenerationRef = useRef(0);
-  const testTypeIdRef = useRef<TestTypeId>(testTypeId);
-  const requestedTestTypeRef = useRef<TestTypeId>(testTypeId);
+  const preferencesRef = useRef<WorkbookPreferences>(DEFAULT_WORKBOOK_PREFERENCES);
+  const requestedPreferencesRef = useRef<WorkbookPreferences>(DEFAULT_WORKBOOK_PREFERENCES);
   const preferenceWriteRunningRef = useRef(false);
+  const preferenceWriteTimerRef = useRef<number | undefined>(undefined);
   const updateCheckRunningRef = useRef(false);
 
   const selectedProfile = TEST_TYPE_PROFILES[testTypeId];
@@ -66,10 +70,6 @@ export default function App() {
     refreshQueuedRef.current = true;
     if (invalidateImmediately && mountedRef.current) {
       setScenario(null);
-      setEvidenceType(TEST_TYPE_PROFILES[testTypeIdRef.current].defaultModuleId);
-      setCaption("");
-      setGenericSide("left");
-      setStatus("UNCHANGED");
       setMessage({ kind: "info", text: "Loading test scenario…" });
     }
     if (refreshRunningRef.current) return;
@@ -84,22 +84,23 @@ export default function App() {
         try {
           const result = await readCurrentScenario();
           if (!mountedRef.current || generation !== refreshGenerationRef.current) continue;
-          setEvidenceType(TEST_TYPE_PROFILES[testTypeIdRef.current].defaultModuleId);
-          setCaption("");
-          setGenericSide("left");
           if (result.kind === "loaded") {
             setScenario(result.scenario);
-            setStatus(result.scenario.status ?? "UNCHANGED");
+            setStatus(
+              result.scenario.status && result.scenario.status !== "UNCHANGED"
+                ? result.scenario.status
+                : preferencesRef.current.status,
+            );
             setMessage({ kind: "success", text: `Loaded ${result.scenario.scenarioId}.` });
           } else {
             setScenario(null);
-            setStatus("UNCHANGED");
+            setStatus(preferencesRef.current.status);
             setMessage({ kind: "info", text: "No test scenario loaded." });
           }
         } catch (error) {
           if (!mountedRef.current || generation !== refreshGenerationRef.current) continue;
           setScenario(null);
-          setStatus("UNCHANGED");
+          setStatus(preferencesRef.current.status);
           setMessage({ kind: "error", text: errorMessage(error) });
         }
       }
@@ -109,28 +110,63 @@ export default function App() {
     }
   }, []);
 
-  const persistTestType = useCallback(async (nextTestTypeId: TestTypeId) => {
-    requestedTestTypeRef.current = nextTestTypeId;
+  const flushPreferences = useCallback(async () => {
     if (preferenceWriteRunningRef.current) return;
     preferenceWriteRunningRef.current = true;
+    let lastAttempt: WorkbookPreferences | undefined;
     try {
       while (mountedRef.current) {
-        const targetTestTypeId = requestedTestTypeRef.current;
+        const targetPreferences = requestedPreferencesRef.current;
+        lastAttempt = targetPreferences;
         try {
-          await writeWorkbookPreferences(targetTestTypeId);
+          await writeWorkbookPreferences(targetPreferences);
           if (mountedRef.current) setPreferenceWarning(null);
         } catch {
           if (mountedRef.current) {
-            setPreferenceWarning("Test type changed for this session but could not be saved to the workbook.");
+            setPreferenceWarning("Form choices changed for this session but could not be saved to the workbook.");
           }
           break;
         }
-        if (targetTestTypeId === requestedTestTypeRef.current) break;
+        if (targetPreferences === requestedPreferencesRef.current) break;
       }
     } finally {
       preferenceWriteRunningRef.current = false;
+      if (mountedRef.current && lastAttempt !== requestedPreferencesRef.current) {
+        window.setTimeout(() => void flushPreferences(), 0);
+      }
     }
   }, []);
+
+  const queuePreferences = useCallback((preferences: WorkbookPreferences, debounce = false) => {
+    preferencesRef.current = preferences;
+    requestedPreferencesRef.current = preferences;
+    if (preferenceWriteTimerRef.current !== undefined) {
+      window.clearTimeout(preferenceWriteTimerRef.current);
+      preferenceWriteTimerRef.current = undefined;
+    }
+    if (debounce) {
+      preferenceWriteTimerRef.current = window.setTimeout(() => {
+        preferenceWriteTimerRef.current = undefined;
+        void flushPreferences();
+      }, HEADER_PERSIST_DELAY_MS);
+      return;
+    }
+    void flushPreferences();
+  }, [flushPreferences]);
+
+  const updateProfilePreferences = useCallback((
+    changes: Partial<WorkbookPreferences["profiles"][TestTypeId]>,
+    debounce = false,
+  ) => {
+    const current = preferencesRef.current;
+    queuePreferences({
+      ...current,
+      profiles: {
+        ...current.profiles,
+        [testTypeId]: { ...current.profiles[testTypeId], ...changes },
+      },
+    }, debounce);
+  }, [queuePreferences, testTypeId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -146,18 +182,21 @@ export default function App() {
         try {
           const result = await readWorkbookPreferences();
           restoredTestTypeId = result.preferences.testTypeId;
+          preferencesRef.current = result.preferences;
+          requestedPreferencesRef.current = result.preferences;
           if (!disposed) setPreferenceWarning(result.warning ?? null);
         } catch {
           if (!disposed) {
-            setPreferenceWarning("Workbook test type could not be loaded. General was selected.");
+            setPreferenceWarning("Workbook form choices could not be loaded. Defaults were selected.");
           }
         }
         if (disposed) return;
-        testTypeIdRef.current = restoredTestTypeId;
-        requestedTestTypeRef.current = restoredTestTypeId;
+        const restoredForm = preferencesRef.current.profiles[restoredTestTypeId];
         setTestTypeId(restoredTestTypeId);
-        setEvidenceType(TEST_TYPE_PROFILES[restoredTestTypeId].defaultModuleId);
-        setGenericSide("left");
+        setEvidenceType(restoredForm.evidenceType);
+        setGenericSide(restoredForm.genericSide);
+        setCaption(restoredForm.header);
+        setStatus(preferencesRef.current.status);
         setPreferencesLoaded(true);
 
         try {
@@ -181,6 +220,9 @@ export default function App() {
     return () => {
       disposed = true;
       mountedRef.current = false;
+      if (preferenceWriteTimerRef.current !== undefined) {
+        window.clearTimeout(preferenceWriteTimerRef.current);
+      }
       if (unsubscribe) void unsubscribe().catch(() => undefined);
     };
   }, [refreshScenario]);
@@ -275,7 +317,6 @@ export default function App() {
       });
       URL.revokeObjectURL(pendingImage.previewUrl);
       setPendingImage(null);
-      setCaption("");
       setMessage({ kind: "success", text: `Inserted ${name}.` });
     } catch (error) {
       setMessage({ kind: "error", text: errorMessage(error) });
@@ -314,12 +355,16 @@ export default function App() {
               disabled={busy}
               onChange={(event) => {
                 const nextTestTypeId = event.target.value as TestTypeId;
-                testTypeIdRef.current = nextTestTypeId;
+                const nextPreferences: WorkbookPreferences = {
+                  ...preferencesRef.current,
+                  testTypeId: nextTestTypeId,
+                };
+                const nextForm = nextPreferences.profiles[nextTestTypeId];
                 setTestTypeId(nextTestTypeId);
-                setEvidenceType(TEST_TYPE_PROFILES[nextTestTypeId].defaultModuleId);
-                setCaption("");
-                setGenericSide("left");
-                void persistTestType(nextTestTypeId);
+                setEvidenceType(nextForm.evidenceType);
+                setCaption(nextForm.header);
+                setGenericSide(nextForm.genericSide);
+                queuePreferences(nextPreferences);
               }}
             >
               {AVAILABLE_TEST_TYPES.map((profile) => (
@@ -386,10 +431,7 @@ export default function App() {
             onChange={(event) => {
               const nextType = event.target.value as ModuleId;
               setEvidenceType(nextType);
-              if (nextType !== "GENERIC_SCREENSHOT") {
-                setCaption("");
-                setGenericSide("left");
-              }
+              updateProfilePreferences({ evidenceType: nextType });
             }}
           >
             {availableModules.map((module) => <option value={module.id} key={module.id}>{module.displayName}</option>)}
@@ -402,23 +444,47 @@ export default function App() {
               <select
                 value={genericSide}
                 disabled={busy}
-                onChange={(event) => setGenericSide(event.target.value as GenericSide)}
+                onChange={(event) => {
+                  const nextSide = event.target.value as GenericSide;
+                  setGenericSide(nextSide);
+                  updateProfilePreferences({ genericSide: nextSide });
+                }}
               >
                 <option value="left">Left (A:D)</option>
                 <option value="right">Right (F:I)</option>
               </select>
             </label>
-            <label className="field">
-              <span>Header</span>
-              <input
-                type="text"
-                value={caption}
-                maxLength={500}
-                disabled={busy}
-                onChange={(event) => setCaption(event.target.value)}
-                placeholder="Dynamic evidence header (optional)"
-              />
-            </label>
+            <div className="field">
+              <span id="header-label">Header</span>
+              <div className="header-input-row">
+                <input
+                  type="text"
+                  aria-labelledby="header-label"
+                  value={caption}
+                  maxLength={500}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const nextHeader = event.target.value;
+                    setCaption(nextHeader);
+                    updateProfilePreferences({ header: nextHeader }, true);
+                  }}
+                  onBlur={() => queuePreferences(preferencesRef.current)}
+                  placeholder="Dynamic evidence header (optional)"
+                />
+                <button
+                  className="button button-secondary clear-header-button"
+                  type="button"
+                  aria-label="Clear Header"
+                  disabled={busy || !caption}
+                  onClick={() => {
+                    setCaption("");
+                    updateProfilePreferences({ header: "" });
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
           </>
         ) : null}
         <div className={`paste-zone ${pendingImage ? "has-image" : ""}`} tabIndex={0} aria-label="Screenshot paste area">
@@ -436,7 +502,15 @@ export default function App() {
         </div>
         <label className="field">
           <span>Status</span>
-          <select disabled={busy} value={status} onChange={(event) => setStatus(event.target.value as EvidenceStatus)}>
+          <select
+            disabled={busy}
+            value={status}
+            onChange={(event) => {
+              const nextStatus = event.target.value as EvidenceStatus;
+              setStatus(nextStatus);
+              queuePreferences({ ...preferencesRef.current, status: nextStatus });
+            }}
+          >
             <option value="UNCHANGED">unchanged</option>
             <option value="PASS/FAIL">PASS/FAIL</option>
             <option value="PASS">PASS</option>
