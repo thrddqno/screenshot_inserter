@@ -8,6 +8,7 @@ import {
   readCurrentScenario,
   removeLastInsertedEvidence,
   subscribeWorksheetActivated,
+  updateScenarioStatus,
 } from "./services/excelService";
 import { getImageFromClipboard, ImageValidationError } from "./services/imageValidation";
 import {
@@ -313,12 +314,36 @@ export default function App() {
         image: pendingImage,
         caption: evidenceType === "GENERIC_SCREENSHOT" ? caption : "",
         side: evidenceType === "GENERIC_SCREENSHOT" ? genericSide : undefined,
-        status,
       });
       URL.revokeObjectURL(pendingImage.previewUrl);
       setPendingImage(null);
       setMessage({ kind: "success", text: `Inserted ${name}.` });
     } catch (error) {
+      setMessage({ kind: "error", text: errorMessage(error) });
+    } finally {
+      setOperationBusy(false);
+    }
+  };
+
+  const handleStatusChange = async (nextStatus: EvidenceStatus) => {
+    const previousStatus = status;
+    setStatus(nextStatus);
+    if (nextStatus === "UNCHANGED") {
+      queuePreferences({ ...preferencesRef.current, status: nextStatus });
+      setMessage({ kind: "info", text: "Worksheet Status left unchanged." });
+      return;
+    }
+    if (!scenario) return;
+
+    setOperationBusy(true);
+    setMessage({ kind: "info", text: "Updating worksheet Status…" });
+    try {
+      await updateScenarioStatus(scenario, testTypeId, nextStatus);
+      setScenario((current) => current ? { ...current, status: nextStatus } : current);
+      queuePreferences({ ...preferencesRef.current, status: nextStatus });
+      setMessage({ kind: "success", text: `Worksheet Status updated to ${nextStatus}.` });
+    } catch (error) {
+      setStatus(previousStatus);
       setMessage({ kind: "error", text: errorMessage(error) });
     } finally {
       setOperationBusy(false);
@@ -421,6 +446,23 @@ export default function App() {
         </details>
       </section>
 
+      <section className="panel" aria-labelledby="status-heading">
+        <h2 id="status-heading">Worksheet Status</h2>
+        <label className="field status-field">
+          <span>Status</span>
+          <select
+            disabled={busy || !scenario?.statusCellAddress}
+            value={status}
+            onChange={(event) => void handleStatusChange(event.target.value as EvidenceStatus)}
+          >
+            <option value="UNCHANGED">unchanged</option>
+            <option value="PASS/FAIL">PASS/FAIL</option>
+            <option value="PASS">PASS</option>
+            <option value="FAIL">FAIL</option>
+          </select>
+        </label>
+      </section>
+
       <section className="panel" aria-labelledby="capture-heading">
         <h2 id="capture-heading">Screenshot to Insert</h2>
         <label className="field">
@@ -500,23 +542,6 @@ export default function App() {
             </>
           )}
         </div>
-        <label className="field">
-          <span>Status</span>
-          <select
-            disabled={busy}
-            value={status}
-            onChange={(event) => {
-              const nextStatus = event.target.value as EvidenceStatus;
-              setStatus(nextStatus);
-              queuePreferences({ ...preferencesRef.current, status: nextStatus });
-            }}
-          >
-            <option value="UNCHANGED">unchanged</option>
-            <option value="PASS/FAIL">PASS/FAIL</option>
-            <option value="PASS">PASS</option>
-            <option value="FAIL">FAIL</option>
-          </select>
-        </label>
       </section>
 
       <div className="actions">

@@ -5,6 +5,7 @@ import {
   removeLastInsertedEvidence,
   subscribeWorksheetActivated,
   toLiteralCellFormula,
+  updateScenarioStatus,
 } from "./excelService";
 
 interface FakeShape {
@@ -123,6 +124,7 @@ const createHost = () => {
       return cell;
   };
   const sheet = {
+    tabColor: "#123456",
     shapes,
     getRange: vi.fn((address: string) => {
       if (ranges[address]) return ranges[address];
@@ -144,7 +146,7 @@ const createHost = () => {
   };
   vi.stubGlobal("Office", {});
   vi.stubGlobal("Excel", { run: (callback: (value: typeof context) => unknown) => callback(context) });
-  return { items, legacyShape, statusRange, semanticStatusRange, headingCells, addTextBox: shapes.addTextBox };
+  return { items, legacyShape, statusRange, semanticStatusRange, headingCells, addTextBox: shapes.addTextBox, sheet };
 };
 
 describe("Excel evidence service", () => {
@@ -189,7 +191,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "Safe text =SUM(A1:A2)",
-      status: "UNCHANGED",
     });
 
     expect(name).toBe("EV__TS4_1_1__GENERIC_SCREENSHOT__001");
@@ -222,7 +223,6 @@ describe("Excel evidence service", () => {
       image,
       caption: "Pair",
       side: "left",
-      status: "UNCHANGED",
     });
     const left = host.items.find((shape) => shape.name === leftName)!;
     const originalTop = left.top;
@@ -234,7 +234,6 @@ describe("Excel evidence service", () => {
       image,
       caption: "",
       side: "right",
-      status: "UNCHANGED",
     });
     const right = host.items.find((shape) => shape.name === rightName)!;
 
@@ -255,7 +254,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "SOA",
-      status: "UNCHANGED",
     });
     const soaShape = host.items.find((shape) => shape.name === soaName)!;
     const soaTop = soaShape.top;
@@ -266,7 +264,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "General",
-      status: "UNCHANGED",
     });
     const generalShape = host.items.find((shape) => shape.name === generalName)!;
 
@@ -288,38 +285,56 @@ describe("Excel evidence service", () => {
         moduleId: "PDF_PAPER",
         image,
         caption: "",
-        status: "UNCHANGED",
       }),
     ).rejects.toThrow("unavailable for selected test type");
   });
 
-  it("writes Status to semantically discovered scenario row", async () => {
+  it("updates Status and direct Status tab colors independently from insertion", async () => {
     const host = createHost();
-    await insertEvidence({
-      scenario: { ...scenario, statusCellAddress: "D3" },
-      testTypeId: "GENERAL",
-      moduleId: "GENERIC_SCREENSHOT",
-      image,
-      caption: "",
-      status: "PASS/FAIL",
-    });
+    await expect(
+      updateScenarioStatus({ ...scenario, statusCellAddress: "D3" }, "GENERAL", "PASS/FAIL"),
+    ).resolves.toBe("#FFC000");
     expect(host.semanticStatusRange.values).toEqual([["PASS/FAIL"]]);
     expect(host.statusRange.values).toEqual([["ORIGINAL"]]);
+    expect(host.sheet.tabColor).toBe("#FFC000");
+
+    await expect(
+      updateScenarioStatus({ ...scenario, statusCellAddress: "D3" }, "GENERAL", "FAIL"),
+    ).resolves.toBe("#FF0000");
+    expect(host.semanticStatusRange.values).toEqual([["FAIL"]]);
+    expect(host.sheet.tabColor).toBe("#FF0000");
+
+    await expect(
+      updateScenarioStatus({ ...scenario, statusCellAddress: "D3" }, "GENERAL", "PASS"),
+    ).resolves.toBe("#00B050");
+    expect(host.sheet.tabColor).toBe("#00B050");
   });
 
   it("refuses Status changes when semantic Status column is unavailable", async () => {
     const host = createHost();
     await expect(
-      insertEvidence({
-        scenario,
-        testTypeId: "GENERAL",
-        moduleId: "GENERIC_SCREENSHOT",
-        image,
-        caption: "",
-        status: "PASS",
-      }),
+      updateScenarioStatus(scenario, "GENERAL", "PASS"),
     ).rejects.toThrow("Status column could not be located");
     expect(host.items.filter((shape) => shape.name.startsWith("EV__"))).toHaveLength(0);
+  });
+
+  it("colors SOA PASS by managed evidence pairs with AFP/PDF precedence", async () => {
+    const host = createHost();
+    const statusScenario = { ...scenario, statusCellAddress: "D3" };
+
+    await expect(updateScenarioStatus(statusScenario, "SOA", "PASS")).resolves.toBeNull();
+    expect(host.sheet.tabColor).toBe("#123456");
+    expect(host.semanticStatusRange.values).toEqual([["PASS"]]);
+
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "INVOICING", image, caption: "" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "SOA_BATCH", image, caption: "" });
+    await expect(updateScenarioStatus(statusScenario, "SOA", "PASS")).resolves.toBe("#00B050");
+    expect(host.sheet.tabColor).toBe("#00B050");
+
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "AFP", image, caption: "" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "PDF_PAPER", image, caption: "" });
+    await expect(updateScenarioStatus(statusScenario, "SOA", "PASS")).resolves.toBe("#92D050");
+    expect(host.sheet.tabColor).toBe("#92D050");
   });
 
   it("migrates version-one managed image metadata to SOA", async () => {
@@ -336,7 +351,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "",
-      status: "UNCHANGED",
     });
 
     expect(JSON.parse(legacyManaged.altTextDescription ?? "{}")).toMatchObject({
@@ -366,7 +380,6 @@ describe("Excel evidence service", () => {
       image,
       caption: "",
       side: "right",
-      status: "UNCHANGED",
     });
 
     expect(JSON.parse(legacyManaged.altTextDescription ?? "{}")).toMatchObject({
@@ -396,7 +409,6 @@ describe("Excel evidence service", () => {
       image,
       caption: "",
       side: "right",
-      status: "UNCHANGED",
     });
 
     expect(JSON.parse(invalidSide.altTextDescription ?? "{}").side).toBe("left");
@@ -404,9 +416,9 @@ describe("Excel evidence service", () => {
 
   it("pairs sequential PDF and AFP insertions and removes only latest managed image", async () => {
     const host = createHost();
-    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "PDF_PAPER", image, caption: "", status: "UNCHANGED" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "PDF_PAPER", image, caption: "" });
     const firstPdfTop = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPER__001")!.top;
-    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "AFP", image, caption: "", status: "UNCHANGED" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "AFP", image, caption: "" });
 
     const pdf = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPER__001")!;
     const afp = host.items.find((shape) => shape.name === "EV__TS4_1_1__AFP__002")!;
@@ -425,8 +437,8 @@ describe("Excel evidence service", () => {
 
   it("allows unlimited screenshots for one evidence type", async () => {
     const host = createHost();
-    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "INVOICING", image, caption: "", status: "UNCHANGED" });
-    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "INVOICING", image, caption: "", status: "UNCHANGED" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "INVOICING", image, caption: "" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "INVOICING", image, caption: "" });
 
     expect(host.items.filter((shape) => shape.name.startsWith("EV__TS4_1_1__INVOICING__"))).toHaveLength(2);
   });
@@ -442,7 +454,6 @@ describe("Excel evidence service", () => {
         image: tallImage,
         caption: "",
         side,
-        status: "UNCHANGED",
       });
 
     const firstName = await insertBlank();
@@ -464,7 +475,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "Dynamic Header",
-      status: "UNCHANGED",
     });
     const first = host.items.find((shape) => shape.name === firstName)!;
     const originalTop = first.top;
@@ -475,7 +485,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "Dynamic Header",
-      status: "UNCHANGED",
     });
     await insertEvidence({
       scenario,
@@ -483,7 +492,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "",
-      status: "UNCHANGED",
     });
 
     expect(first.top).toBe(originalTop);
@@ -508,7 +516,6 @@ describe("Excel evidence service", () => {
       moduleId,
       image,
       caption: "",
-      status: "UNCHANGED",
     });
     const first = host.items.find((shape) => shape.name === firstName)!;
     const originalTop = first.top;
@@ -519,7 +526,6 @@ describe("Excel evidence service", () => {
       moduleId,
       image,
       caption: "",
-      status: "UNCHANGED",
     });
 
     expect(first.top).toBe(originalTop);
@@ -540,7 +546,6 @@ describe("Excel evidence service", () => {
       moduleId: firstModule,
       image,
       caption: "",
-      status: "UNCHANGED",
     });
     const first = host.items.find((shape) => shape.name === firstName)!;
     const originalTop = first.top;
@@ -551,7 +556,6 @@ describe("Excel evidence service", () => {
       moduleId: secondModule,
       image,
       caption: "",
-      status: "UNCHANGED",
     });
 
     expect(first.top).toBe(originalTop);
@@ -565,7 +569,6 @@ describe("Excel evidence service", () => {
       moduleId: "INVOICING",
       image,
       caption: "",
-      status: "UNCHANGED",
     });
     const heading = [...host.headingCells.values()].find(
       (cell) => cell.values[0][0] === "Invoicing",
@@ -580,7 +583,6 @@ describe("Excel evidence service", () => {
         moduleId: "INVOICING",
         image,
         caption: "",
-        status: "UNCHANGED",
       }),
     ).rejects.toThrow("contains user content");
 
@@ -600,7 +602,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "Dynamic Header",
-      status: "UNCHANGED",
     });
     const heading = [...host.headingCells.values()].find(
       (cell) => cell.values[0][0] === "Dynamic Header",
@@ -620,7 +621,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "Dynamic Header",
-      status: "UNCHANGED",
     });
     await insertEvidence({
       scenario,
@@ -628,7 +628,6 @@ describe("Excel evidence service", () => {
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "",
-      status: "UNCHANGED",
     });
     const heading = [...host.headingCells.values()].find(
       (cell) => cell.values[0][0] === "Dynamic Header",
@@ -647,7 +646,6 @@ describe("Excel evidence service", () => {
       moduleId: "PDF_PAPER",
       image,
       caption: "Must not persist",
-      status: "UNCHANGED",
     });
     const inserted = host.items.find((shape) => shape.name === name)!;
     expect(JSON.parse(inserted.altTextDescription ?? "{}").caption).toBe("");

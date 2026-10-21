@@ -152,9 +152,11 @@ describe("task pane", () => {
   });
 
   it("persists and restores separate form choices for each Test Type", async () => {
+    const savedPreferences = preferences("GENERAL");
+    savedPreferences.status = "PASS/FAIL";
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
     vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
-      preferences: preferences("GENERAL"),
+      preferences: savedPreferences,
     });
     const writePreferences = vi
       .spyOn(workbookPreferences, "writeWorkbookPreferences")
@@ -167,7 +169,6 @@ describe("task pane", () => {
 
     render(<App />);
     await screen.findByText("No test scenario loaded.");
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "PASS/FAIL" } });
     fireEvent.change(screen.getByLabelText("Side"), { target: { value: "right" } });
     fireEvent.change(screen.getByLabelText("Header"), { target: { value: "General Header" } });
     fireEvent.change(screen.getByLabelText("Test Type"), { target: { value: "SOA" } });
@@ -193,6 +194,33 @@ describe("task pane", () => {
 
     fireEvent.change(screen.getByLabelText("Test Type"), { target: { value: "SOA" } });
     expect(screen.getByLabelText("Evidence Type")).toHaveValue("PDF_PAPER");
+  });
+
+  it("updates worksheet Status immediately when dropdown changes", async () => {
+    const scenario = {
+      worksheetName: "TS6.1",
+      scenarioId: "TS6.1",
+      condition: "Condition",
+      expectedResult: "Result",
+      status: "PASS" as const,
+      statusCellAddress: "D3",
+    };
+    vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
+    vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
+      preferences: preferences("GENERAL"),
+    });
+    vi.spyOn(workbookPreferences, "writeWorkbookPreferences").mockResolvedValue(undefined);
+    vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
+    vi.spyOn(excelService, "readCurrentScenario").mockResolvedValue({ kind: "loaded", scenario });
+    const updateStatus = vi.spyOn(excelService, "updateScenarioStatus").mockResolvedValue("#FF0000");
+
+    render(<App />);
+    await screen.findByText("TS6.1");
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "FAIL" } });
+
+    await screen.findByText("Worksheet Status updated to FAIL.");
+    expect(updateStatus).toHaveBeenCalledWith(scenario, "GENERAL", "FAIL");
+    expect(screen.getByLabelText("Status")).toHaveValue("FAIL");
   });
 
   it("reloads workbook Status during manual scenario refresh", async () => {
