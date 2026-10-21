@@ -64,6 +64,13 @@ describe("workbook preferences", () => {
     await expect(readWorkbookPreferences()).resolves.toEqual({ preferences: stored });
   });
 
+  it("coerces legacy unchanged status to PASS/FAIL with warning", async () => {
+    createHost(preferences({ testTypeId: "SOA", status: "UNCHANGED" }));
+    const result = await readWorkbookPreferences();
+    expect(result.preferences.status).toBe("PASS/FAIL");
+    expect(result.warning).toBeDefined();
+  });
+
   it.each([
     { version: 3, testTypeId: "SOA" },
     { version: 2, testTypeId: "FI", status: "PASS", profiles: {} },

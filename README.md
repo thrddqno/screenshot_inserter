@@ -110,13 +110,13 @@ Some Microsoft 365 builds also expose **Upload My Add-in** directly.
 5. For Generic Screenshot, choose **Left (A:D)** or **Right (F:I)** and optionally enter dynamic Header.
 6. Focus task pane and press `Ctrl+V` after Windows Snipping Tool capture.
 7. Select **Insert**. Screenshot insertion never changes worksheet Status.
-8. In separate **Worksheet Status** panel, choose `unchanged`, `PASS/FAIL`, `PASS`, or `FAIL`. Changing dropdown immediately updates workbook; no button required.
+8. In separate **Worksheet Status** panel, choose `PASS/FAIL`, `PASS`, or `FAIL`. Changing dropdown immediately updates workbook; no button required.
 
 Changing selected row while already on `Summary` does not activate another worksheet. Use refresh icon after changing Summary row.
 
 Images are appended below all existing non-add-in shapes. Existing `Picture N` objects are not moved, renamed, or deleted.
 
-Test Type, Status, and each profile's last Evidence Type, Generic Side, and Header are stored in Excel workbook settings. A workbook without saved choices defaults to `General`. Changing Test Type restores that profile's choices while keeping pending screenshot and Status. Scenario refresh preserves Evidence Type, Side, and Header; recognized worksheet Status takes precedence. General and SOA evidence are isolated: one profile does not reflow or remove another profile's images.
+Test Type, Status, and each profile's last Evidence Type, Generic Side, and Header are stored in Excel workbook settings. A workbook without saved choices defaults to `General` and `PASS/FAIL` Status. Changing Test Type restores that profile's choices while keeping pending screenshot and Status. Scenario refresh preserves Evidence Type, Side, and Header; recognized worksheet Status takes precedence. General and SOA evidence are isolated: one profile does not reflow or remove another profile's images.
 
 ### Test Scenario discovery
 
@@ -128,15 +128,11 @@ On `Summary`, task pane finds Scenario ID column from its header instead of assu
 
 Status update writes discovered Status cell and worksheet tab color together:
 
-- `unchanged`: no workbook or tab-color change
 - `PASS/FAIL`: `#FFC000`
+- `PASS`: `#00B050`
 - `FAIL`: `#FF0000`
-- General `PASS`: `#00B050`
-- SOA `PASS` with managed Invoicing and SOA Batch evidence: `#00B050`
-- SOA `PASS` with managed AFP and PDF evidence: `#92D050` and overrides dark green
-- SOA `PASS` without either complete evidence pair: preserve current tab color
 
-SOA pair detection includes Paperplus variants and only add-in-managed evidence for current scenario/profile.
+Blank or unrecognized worksheet Status displays persisted Status, defaulting to `PASS/FAIL`. Legacy stored `unchanged` values are coerced to `PASS/FAIL`.
 
 Inserted image names follow:
 

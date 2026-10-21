@@ -26,7 +26,7 @@ export interface WorkbookPreferencesReadResult {
 const createDefaultPreferences = (): WorkbookPreferences => ({
   version: PREFERENCES_VERSION,
   testTypeId: "GENERAL",
-  status: "UNCHANGED",
+  status: "PASS/FAIL",
   profiles: {
     GENERAL: {
       evidenceType: "GENERIC_SCREENSHOT",
@@ -44,7 +44,7 @@ const createDefaultPreferences = (): WorkbookPreferences => ({
 export const DEFAULT_WORKBOOK_PREFERENCES: WorkbookPreferences = createDefaultPreferences();
 
 const isEvidenceStatus = (value: unknown): value is EvidenceStatus =>
-  value === "UNCHANGED" || value === "PASS/FAIL" || value === "PASS" || value === "FAIL";
+  value === "PASS/FAIL" || value === "PASS" || value === "FAIL";
 
 const isGenericSide = (value: unknown): value is GenericSide => value === "left" || value === "right";
 

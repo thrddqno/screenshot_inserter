@@ -21,16 +21,14 @@ import {
   scenarioKey,
 } from "./shapeNames";
 
-const STATUS_VALUES = new Set<EvidenceStatus>(["UNCHANGED", "PASS/FAIL", "PASS", "FAIL"]);
+const STATUS_TAB_COLORS: Record<Exclude<EvidenceStatus, "UNCHANGED">, string> = {
+  "PASS/FAIL": "#FFC000",
+  FAIL: "#FF0000",
+  PASS: "#00B050",
+};
 const DISCOVERED_STATUS_ADDRESS = /^[A-P](?:[1-9]|1[0-2])$/;
 const CAPTION_MAXIMUM_LENGTH = 500;
 const MANAGED_METADATA_VERSION = 3;
-const STATUS_TAB_COLORS = {
-  "PASS/FAIL": "#FFC000",
-  FAIL: "#FF0000",
-  PASS_DARK: "#00B050",
-  PASS_LIGHT: "#92D050",
-} as const;
 
 interface ManagedHeadingMetadata {
   address: string;
@@ -203,14 +201,9 @@ export const readCurrentScenario = async (): Promise<ScenarioReadResult> => {
 
 export const updateScenarioStatus = async (
   scenario: ScenarioContext,
-  testTypeId: TestTypeId,
-  status: EvidenceStatus,
-): Promise<string | null> => {
+  status: Exclude<EvidenceStatus, "UNCHANGED">,
+): Promise<string> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
-  if (!isTestTypeId(testTypeId) || !STATUS_VALUES.has(status)) {
-    throw new ExcelServiceError("Invalid status value.");
-  }
-  if (status === "UNCHANGED") return null;
   if (!scenario.statusCellAddress || !DISCOVERED_STATUS_ADDRESS.test(scenario.statusCellAddress)) {
     throw new ExcelServiceError("Status column could not be located for this test scenario.");
   }
@@ -218,36 +211,10 @@ export const updateScenarioStatus = async (
   return Excel.run(async (context) => {
     const sheet = context.workbook.worksheets.getItem(scenario.worksheetName);
     const statusCell = sheet.getRange(scenario.statusCellAddress!);
-    let tabColor: string | null = null;
-
-    if (status === "PASS/FAIL") {
-      tabColor = STATUS_TAB_COLORS["PASS/FAIL"];
-    } else if (status === "FAIL") {
-      tabColor = STATUS_TAB_COLORS.FAIL;
-    } else if (testTypeId === "GENERAL") {
-      tabColor = STATUS_TAB_COLORS.PASS_DARK;
-    } else {
-      const shapes = sheet.shapes;
-      shapes.load("items/name,items/altTextDescription");
-      await context.sync();
-      const targetScenarioKey = scenarioKey(scenario.scenarioId);
-      const modules = new Set<ModuleId>();
-      for (const shape of shapes.items) {
-        const parsed = parseImageShapeName(shape.name);
-        if (parsed?.scenarioKey !== targetScenarioKey) continue;
-        const metadata = parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId);
-        if (metadata.testTypeId === "SOA") modules.add(parsed.moduleId);
-      }
-      const hasAfp = modules.has("AFP") || modules.has("AFP_PAPERPLUS");
-      const hasPdf = modules.has("PDF_PAPER") || modules.has("PDF_PAPERPLUS");
-      const hasInvoicing = modules.has("INVOICING");
-      const hasSoaBatch = modules.has("SOA_BATCH") || modules.has("SOA_BATCH_PAPERPLUS");
-      if (hasAfp && hasPdf) tabColor = STATUS_TAB_COLORS.PASS_LIGHT;
-      else if (hasInvoicing && hasSoaBatch) tabColor = STATUS_TAB_COLORS.PASS_DARK;
-    }
+    const tabColor = STATUS_TAB_COLORS[status];
 
     statusCell.values = [[status]];
-    if (tabColor) sheet.tabColor = tabColor;
+    sheet.tabColor = tabColor;
     await context.sync();
     return tabColor;
   });

@@ -48,8 +48,9 @@ describe("task pane", () => {
     expect(screen.getByRole("option", { name: "Right (F:I)" })).toBeVisible();
     expect(screen.getByLabelText("Header")).toBeVisible();
     const status = screen.getByLabelText("Status");
-    expect(status).toHaveValue("UNCHANGED");
-    expect(status.querySelectorAll("option")).toHaveLength(4);
+    expect(status).toHaveValue("PASS/FAIL");
+    expect(status.querySelectorAll("option")).toHaveLength(3);
+    expect(screen.queryByRole("option", { name: "unchanged" })).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: "PASS/FAIL" })).toBeVisible();
     expect(screen.queryByRole("option", { name: "BLOCKED" })).not.toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("Open this page inside an Excel task pane.");
@@ -219,7 +220,7 @@ describe("task pane", () => {
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "FAIL" } });
 
     await screen.findByText("Worksheet Status updated to FAIL.");
-    expect(updateStatus).toHaveBeenCalledWith(scenario, "GENERAL", "FAIL");
+    expect(updateStatus).toHaveBeenCalledWith(scenario, "FAIL");
     expect(screen.getByLabelText("Status")).toHaveValue("FAIL");
   });
 

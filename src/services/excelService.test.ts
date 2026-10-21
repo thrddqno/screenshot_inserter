@@ -289,23 +289,23 @@ describe("Excel evidence service", () => {
     ).rejects.toThrow("unavailable for selected test type");
   });
 
-  it("updates Status and direct Status tab colors independently from insertion", async () => {
+  it("updates Status and Status tab colors independently from insertion", async () => {
     const host = createHost();
     await expect(
-      updateScenarioStatus({ ...scenario, statusCellAddress: "D3" }, "GENERAL", "PASS/FAIL"),
+      updateScenarioStatus({ ...scenario, statusCellAddress: "D3" }, "PASS/FAIL"),
     ).resolves.toBe("#FFC000");
     expect(host.semanticStatusRange.values).toEqual([["PASS/FAIL"]]);
     expect(host.statusRange.values).toEqual([["ORIGINAL"]]);
     expect(host.sheet.tabColor).toBe("#FFC000");
 
     await expect(
-      updateScenarioStatus({ ...scenario, statusCellAddress: "D3" }, "GENERAL", "FAIL"),
+      updateScenarioStatus({ ...scenario, statusCellAddress: "D3" }, "FAIL"),
     ).resolves.toBe("#FF0000");
     expect(host.semanticStatusRange.values).toEqual([["FAIL"]]);
     expect(host.sheet.tabColor).toBe("#FF0000");
 
     await expect(
-      updateScenarioStatus({ ...scenario, statusCellAddress: "D3" }, "GENERAL", "PASS"),
+      updateScenarioStatus({ ...scenario, statusCellAddress: "D3" }, "PASS"),
     ).resolves.toBe("#00B050");
     expect(host.sheet.tabColor).toBe("#00B050");
   });
@@ -313,28 +313,18 @@ describe("Excel evidence service", () => {
   it("refuses Status changes when semantic Status column is unavailable", async () => {
     const host = createHost();
     await expect(
-      updateScenarioStatus(scenario, "GENERAL", "PASS"),
+      updateScenarioStatus(scenario, "PASS"),
     ).rejects.toThrow("Status column could not be located");
     expect(host.items.filter((shape) => shape.name.startsWith("EV__"))).toHaveLength(0);
   });
 
-  it("colors SOA PASS by managed evidence pairs with AFP/PDF precedence", async () => {
+  it("colors SOA PASS dark green without evidence scan", async () => {
     const host = createHost();
     const statusScenario = { ...scenario, statusCellAddress: "D3" };
 
-    await expect(updateScenarioStatus(statusScenario, "SOA", "PASS")).resolves.toBeNull();
-    expect(host.sheet.tabColor).toBe("#123456");
-    expect(host.semanticStatusRange.values).toEqual([["PASS"]]);
-
-    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "INVOICING", image, caption: "" });
-    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "SOA_BATCH", image, caption: "" });
-    await expect(updateScenarioStatus(statusScenario, "SOA", "PASS")).resolves.toBe("#00B050");
+    await expect(updateScenarioStatus(statusScenario, "PASS")).resolves.toBe("#00B050");
     expect(host.sheet.tabColor).toBe("#00B050");
-
-    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "AFP", image, caption: "" });
-    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "PDF_PAPER", image, caption: "" });
-    await expect(updateScenarioStatus(statusScenario, "SOA", "PASS")).resolves.toBe("#92D050");
-    expect(host.sheet.tabColor).toBe("#92D050");
+    expect(host.semanticStatusRange.values).toEqual([["PASS"]]);
   });
 
   it("migrates version-one managed image metadata to SOA", async () => {

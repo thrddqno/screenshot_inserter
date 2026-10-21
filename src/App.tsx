@@ -44,7 +44,7 @@ export default function App() {
   const [caption, setCaption] = useState("");
   const [genericSide, setGenericSide] = useState<GenericSide>("left");
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
-  const [status, setStatus] = useState<EvidenceStatus>("UNCHANGED");
+  const [status, setStatus] = useState<EvidenceStatus>("PASS/FAIL");
   const [refreshing, setRefreshing] = useState(false);
   const [operationBusy, setOperationBusy] = useState(false);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
@@ -325,20 +325,15 @@ export default function App() {
     }
   };
 
-  const handleStatusChange = async (nextStatus: EvidenceStatus) => {
+  const handleStatusChange = async (nextStatus: Exclude<EvidenceStatus, "UNCHANGED">) => {
     const previousStatus = status;
     setStatus(nextStatus);
-    if (nextStatus === "UNCHANGED") {
-      queuePreferences({ ...preferencesRef.current, status: nextStatus });
-      setMessage({ kind: "info", text: "Worksheet Status left unchanged." });
-      return;
-    }
     if (!scenario) return;
 
     setOperationBusy(true);
     setMessage({ kind: "info", text: "Updating worksheet Status…" });
     try {
-      await updateScenarioStatus(scenario, testTypeId, nextStatus);
+      await updateScenarioStatus(scenario, nextStatus);
       setScenario((current) => current ? { ...current, status: nextStatus } : current);
       queuePreferences({ ...preferencesRef.current, status: nextStatus });
       setMessage({ kind: "success", text: `Worksheet Status updated to ${nextStatus}.` });
@@ -453,9 +448,8 @@ export default function App() {
           <select
             disabled={busy || !scenario?.statusCellAddress}
             value={status}
-            onChange={(event) => void handleStatusChange(event.target.value as EvidenceStatus)}
+            onChange={(event) => void handleStatusChange(event.target.value as Exclude<EvidenceStatus, "UNCHANGED">)}
           >
-            <option value="UNCHANGED">unchanged</option>
             <option value="PASS/FAIL">PASS/FAIL</option>
             <option value="PASS">PASS</option>
             <option value="FAIL">FAIL</option>
