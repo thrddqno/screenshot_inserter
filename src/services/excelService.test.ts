@@ -3,13 +3,16 @@ import type { GenericSide, ModuleId, PendingImage, ScenarioContext } from "../ty
 import {
   insertEvidence,
   removeLastInsertedEvidence,
+  subscribeWorkbookPictureActivated,
   subscribeWorksheetActivated,
   toLiteralCellFormula,
   updateScenarioStatus,
 } from "./excelService";
 
 interface FakeShape {
+  id: string;
   name: string;
+  type: string;
   left: number;
   top: number;
   width: number;
@@ -21,6 +24,8 @@ interface FakeShape {
   lockAspectRatio?: boolean;
   altTextTitle?: string;
   altTextDescription?: string;
+  copyTo?: ReturnType<typeof vi.fn>;
+  onActivated?: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> };
 }
 
 const scenario: ScenarioContext = {
@@ -41,7 +46,9 @@ const image: PendingImage = {
 
 const createShape = (name: string, overrides: Partial<FakeShape> = {}): FakeShape => {
   const shape: FakeShape = {
+    id: name,
     name,
+    type: "Image",
     left: 0,
     top: 0,
     width: 100,
@@ -86,6 +93,7 @@ const createHost = () => {
       const found = items.find((shape) => shape.name === name && !shape.deleted);
       return found ?? createShape(name, { isNullObject: true });
     }),
+    getItem: vi.fn((key: string) => items.find((shape) => shape.id === key || shape.name === key)!),
   };
   const ranges: Record<string, object> = {
     "A1:D1": { left: 0, width: 400, load: vi.fn() },
@@ -176,6 +184,47 @@ describe("Excel evidence service", () => {
     expect(sync).toHaveBeenCalledTimes(2);
   });
 
+  it("registers picture activation once and ignores non-image shapes", async () => {
+    const imageEvents = { add: vi.fn(), remove: vi.fn() };
+    const nonImageEvents = { add: vi.fn(), remove: vi.fn() };
+    const picture = createShape("Picture 1", { id: "picture-1", onActivated: imageEvents });
+    const rectangle = createShape("Rectangle 1", {
+      id: "rectangle-1",
+      type: "GeometricShape",
+      onActivated: nonImageEvents,
+    });
+    const worksheet = {
+      id: "sheet-1",
+      shapes: { items: [picture, rectangle], load: vi.fn() },
+    };
+    const context = {
+      workbook: { worksheets: { items: [worksheet], load: vi.fn() } },
+      sync: vi.fn(async () => undefined),
+    };
+    vi.stubGlobal("Office", {});
+    vi.stubGlobal("Excel", {
+      run: (callback: (value: typeof context) => unknown) => callback(context),
+    });
+    const handler = vi.fn(async () => undefined);
+
+    const subscription = await subscribeWorkbookPictureActivated(handler);
+    await subscription.refresh();
+    expect(imageEvents.add).toHaveBeenCalledOnce();
+    expect(nonImageEvents.add).not.toHaveBeenCalled();
+
+    const activationHandler = imageEvents.add.mock.calls[0][0];
+    await activationHandler({ worksheetId: "sheet-1", shapeId: "picture-1", type: "ShapeActivated" });
+    expect(handler).toHaveBeenCalledWith({
+      worksheetId: "sheet-1",
+      shapeId: "picture-1",
+      name: "Picture 1",
+    });
+
+    await subscription.unsubscribe();
+    expect(imageEvents.remove).toHaveBeenCalledWith(activationHandler);
+    expect(nonImageEvents.remove).not.toHaveBeenCalled();
+  });
+
   it("inserts one safe managed image without touching legacy shape or status", async () => {
     const host = createHost();
     const originalLegacyGeometry = {
@@ -211,6 +260,54 @@ describe("Excel evidence service", () => {
       version: 3,
       testTypeId: "SOA",
       side: "left",
+    });
+  });
+
+  it("copies a workbook picture without changing or rasterizing the source", async () => {
+    const host = createHost();
+    const source = host.legacyShape;
+    source.id = "source-picture";
+    source.name = "Source Picture";
+    source.type = "Image";
+    source.copyTo = vi.fn(() => {
+      const copied = createShape("copied-picture", {
+        left: source.left,
+        top: source.top,
+        width: source.width,
+        height: source.height,
+      });
+      host.items.push(copied);
+      return copied;
+    });
+    const addImage = host.sheet.shapes.addImage;
+
+    const name = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+      sourceShape: {
+        worksheetId: "source-sheet",
+        shapeId: "source-picture",
+        name: "Source Picture",
+      },
+    });
+
+    expect(source.copyTo).toHaveBeenCalledWith(host.sheet);
+    expect(addImage).not.toHaveBeenCalled();
+    expect(source).toMatchObject({
+      id: "source-picture",
+      name: "Source Picture",
+      left: 10,
+      top: 100,
+      width: 300,
+      height: 400,
+    });
+    expect(source.deleted).not.toBe(true);
+    expect(host.items.find((shape) => shape.name === name)).toMatchObject({
+      altTextTitle: "PDF",
+      width: 400,
     });
   });
 

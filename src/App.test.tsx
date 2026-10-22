@@ -15,6 +15,10 @@ const preferences = (testTypeId: TestTypeId) => ({
 describe("task pane", () => {
   beforeEach(() => {
     vi.spyOn(updateService, "checkForAppUpdate").mockResolvedValue(null);
+    vi.spyOn(excelService, "subscribeWorkbookPictureActivated").mockResolvedValue({
+      refresh: vi.fn(async () => undefined),
+      unsubscribe: vi.fn(async () => undefined),
+    });
   });
 
   afterEach(() => {
@@ -291,6 +295,65 @@ describe("task pane", () => {
     await screen.findByText("Inserted EV__TS6_1__GENERIC_SCREENSHOT__001.");
     expect(screen.getByLabelText("Header")).toHaveValue("Persistent Header");
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ caption: "Persistent Header" }));
+  });
+
+  it("selects an Excel picture and inserts a copied workbook shape", async () => {
+    vi.stubGlobal("URL", { ...URL, revokeObjectURL: vi.fn() });
+    const sourcePicture = {
+      worksheetId: "source-sheet",
+      shapeId: "picture-7",
+      name: "Picture 7",
+    };
+    let pictureHandler: excelService.WorkbookPictureActivatedHandler | undefined;
+    const refreshPictures = vi.fn(async () => undefined);
+    vi.mocked(excelService.subscribeWorkbookPictureActivated).mockImplementation(async (handler) => {
+      pictureHandler = handler;
+      return {
+        refresh: refreshPictures,
+        unsubscribe: vi.fn(async () => undefined),
+      };
+    });
+    vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
+    vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
+      preferences: preferences("GENERAL"),
+    });
+    vi.spyOn(workbookPreferences, "writeWorkbookPreferences").mockResolvedValue(undefined);
+    vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
+    vi.spyOn(excelService, "readCurrentScenario").mockResolvedValue({
+      kind: "loaded",
+      scenario: {
+        worksheetName: "TS6.1",
+        scenarioId: "TS6.1",
+        condition: "Condition",
+        expectedResult: "Result",
+      },
+    });
+    vi.spyOn(excelService, "getWorkbookPicturePreview").mockResolvedValue({
+      base64: "iVBORw0KGgo=",
+      mimeType: "image/png",
+      size: 100,
+      width: 640,
+      height: 480,
+      previewUrl: "blob:excel-picture",
+    });
+    const insert = vi.spyOn(excelService, "insertEvidence").mockResolvedValue(
+      "EV__TS6_1__GENERIC_SCREENSHOT__001",
+    );
+
+    render(<App />);
+    await screen.findByText("TS6.1");
+    fireEvent.click(screen.getByRole("button", { name: "Select Excel picture" }));
+    expect(await screen.findByText("Click a picture in any worksheet to select it.")).toBeVisible();
+    expect(refreshPictures).toHaveBeenCalled();
+
+    await act(async () => {
+      await pictureHandler?.(sourcePicture);
+    });
+    expect(await screen.findByText("From workbook: Picture 7")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Insert" }));
+
+    await screen.findByText("Inserted EV__TS6_1__GENERIC_SCREENSHOT__001.");
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ sourceShape: sourcePicture }));
   });
 
   it("serializes rapid Test Type saves so latest choice wins", async () => {

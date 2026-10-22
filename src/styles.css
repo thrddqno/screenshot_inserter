@@ -74,6 +74,8 @@ input[type="text"], select {
 .paste-zone.has-image { border-style: solid; }
 .paste-zone img { max-height: 220px; max-width: 100%; object-fit: contain; }
 .paste-zone p, .paste-zone span { color: #616161; margin: 0; font-size: 12px; }
+.excel-picture-button { width: 100%; }
+.selection-help { color: #0f548c; font-size: 12px; margin: 6px 0 0; text-align: center; }
 
 .actions { display: grid; gap: 8px; }
 .button { border: 1px solid transparent; border-radius: 4px; cursor: pointer; min-height: 34px; padding: 6px 12px; font-weight: 600; }

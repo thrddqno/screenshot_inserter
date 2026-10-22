@@ -83,9 +83,10 @@ Some Microsoft 365 builds also expose **Upload My Add-in** directly.
 3. Choose Test Type: `General` provides only Generic Screenshot; `SOA` provides all SOA evidence types.
 4. Choose Evidence Type.
 5. For Generic Screenshot, choose **Left (A:D)** or **Right (F:I)** and optionally enter dynamic Header. Right images start at column F and match the `A:D` width.
-6. Focus task pane and press `Ctrl+V` after Windows Snipping Tool capture.
-7. Select **Insert**. Screenshot insertion never changes worksheet Status.
-8. In separate **Worksheet Status** panel, choose `PASS/FAIL`, `PASS`, or `FAIL`. Changing dropdown immediately updates workbook; no button required.
+6. To use a clipboard screenshot, focus the task pane and press `Ctrl+V` after Windows Snipping Tool capture.
+7. To reuse a picture already in the workbook, select **Select Excel picture**, then click the picture on any worksheet. Return to the scenario sheet if the source was elsewhere.
+8. Select **Insert**. Workbook pictures are copied; the source picture stays in place. Screenshot insertion never changes worksheet Status.
+9. In separate **Worksheet Status** panel, choose `PASS/FAIL`, `PASS`, or `FAIL`. Changing dropdown immediately updates workbook; no button required.
 
 Changing selected row while already on `Summary` does not activate another worksheet. Use refresh icon after changing Summary row.
 
@@ -181,6 +182,7 @@ npm run build
 - Non-generic evidence accepts no caption/header input
 - Status constrained to static allowlist
 - Screenshot Base64 held only in memory
+- Workbook picture previews are held only in memory; insertion uses Excel's shape-copy API
 - No screenshot upload, backend, local storage, or credentials
 - Existing shapes excluded from deletion unless name exactly matches managed pattern
 - Heading writes stop when target cell contains user-owned content
@@ -219,5 +221,6 @@ Company rollout should use approved internal HTTPS hosting or private GitHub Ent
 
 - Only first milestone layouts are validated in configuration.
 - Real Excel host acceptance must run on Windows Excel and Excel for web.
+- Excel picture selection requires the user to arm **Select Excel picture** before clicking an existing worksheet image; Office.js does not expose a getter for the currently selected Excel shape.
 - Removed evidence leaves managed heading cells in place; no unrelated content is touched.
 - Evidence count is not updated because reference workbook defines no configured count cell.
