@@ -67,6 +67,7 @@ const anchorFor = (anchors: LayoutAnchors, placement: Placement): Rectangle => a
 
 interface EvidenceGroup {
   key: string;
+  signature: string;
   moduleIds: ModuleId[];
   rows: LayoutImage[][];
   genericHeading?: string;
@@ -97,6 +98,16 @@ const canShareChronologicalRow = (first: SequencedImage, second: SequencedImage)
   );
 };
 
+const evidenceFamilyKey = (moduleId: ModuleId): string => {
+  const partner = EVIDENCE_MODULES[moduleId].pairingPartner;
+  if (!partner) return moduleId;
+  return [moduleId, partner]
+    .sort((first, second) =>
+      EVIDENCE_MODULES[first].placement.localeCompare(EVIDENCE_MODULES[second].placement),
+    )
+    .join("+");
+};
+
 const buildEvidenceGroups = (
   selectedModules: readonly ModuleId[],
   images: readonly LayoutImage[],
@@ -125,21 +136,20 @@ const buildEvidenceGroups = (
     const moduleIds = row.map((image) => image.moduleId);
     const signature = isGeneric
       ? `GENERIC_SCREENSHOT:${first.genericHeading}`
-      : moduleIds.join("+");
+      : evidenceFamilyKey(first.image.moduleId);
     const previous = groups.at(-1);
-    const previousSignature = previous
-      ? previous.moduleIds[0] === "GENERIC_SCREENSHOT"
-        ? `GENERIC_SCREENSHOT:${previous.genericHeading}`
-        : previous.moduleIds.join("+")
-      : undefined;
 
-    if (previous && previousSignature === signature) {
+    if (previous?.signature === signature) {
       previous.rows.push(row);
+      for (const moduleId of moduleIds) {
+        if (!previous.moduleIds.includes(moduleId)) previous.moduleIds.push(moduleId);
+      }
       continue;
     }
 
     groups.push({
       key: `${signature}:${first.image.sequence}`,
+      signature,
       moduleIds,
       rows: [row],
       genericHeading: isGeneric ? first.genericHeading : undefined,

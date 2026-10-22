@@ -425,6 +425,25 @@ describe("Excel evidence service", () => {
     expect(host.legacyShape.delete).not.toHaveBeenCalled();
   });
 
+  it("keeps repeated PDF screenshots under one header when AFP is inserted", async () => {
+    const host = createHost();
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "PDF_PAPER", image, caption: "" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "PDF_PAPER", image, caption: "" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "AFP", image, caption: "" });
+
+    const pdf1 = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPER__001")!;
+    const pdf2 = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPER__002")!;
+    const afp = host.items.find((shape) => shape.name === "EV__TS4_1_1__AFP__003")!;
+    const activeHeadingTexts = [...host.headingCells.values()]
+      .map((cell) => cell.values[0][0])
+      .filter(Boolean);
+
+    expect(activeHeadingTexts.filter((text) => text === "PDF")).toHaveLength(1);
+    expect(activeHeadingTexts.filter((text) => text === "AFP")).toHaveLength(1);
+    expect(pdf2.top).toBeGreaterThan(pdf1.top + pdf1.height);
+    expect(pdf2.top).toBe(afp.top);
+  });
+
   it("preserves chronological geometry across separate mixed-evidence insertions", async () => {
     const host = createHost();
     const modules: ModuleId[] = ["GENERIC_SCREENSHOT", "PDF_PAPER", "SOA_BATCH", "AFP"];

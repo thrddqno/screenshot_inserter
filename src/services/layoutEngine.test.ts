@@ -59,6 +59,34 @@ describe("buildLayout", () => {
     expect(afp.width / afp.height).toBeCloseTo(500 / 700);
   });
 
+  it.each([
+    ["PDF_PAPER", "AFP"],
+    ["PDF_PAPERLESS", "AFP_PAPERLESS"],
+    ["SOA_BATCH", "SOA_BATCH_PAPERLESS"],
+  ] as const)("keeps repeated %s screenshots under one header when %s joins the group", (leftModule, rightModule) => {
+    const images: LayoutImage[] = [
+      { name: "left-1", moduleId: leftModule, sequence: 1, naturalWidth: 800, naturalHeight: 500, caption: "" },
+      { name: "left-2", moduleId: leftModule, sequence: 2, naturalWidth: 600, naturalHeight: 900, caption: "" },
+      { name: "right-3", moduleId: rightModule, sequence: 3, naturalWidth: 500, naturalHeight: 700, caption: "" },
+    ];
+    const plan = buildLayout({
+      selectedModules: [leftModule, rightModule],
+      images,
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+
+    expect(plan.headings.filter((heading) => heading.moduleId === leftModule)).toHaveLength(1);
+    expect(plan.headings.filter((heading) => heading.moduleId === rightModule)).toHaveLength(1);
+    expectChronologicalOrder(plan.images, images.map((image) => image.name));
+    const left1 = plan.images.find((image) => image.name === "left-1")!;
+    const left2 = plan.images.find((image) => image.name === "left-2")!;
+    const right3 = plan.images.find((image) => image.name === "right-3")!;
+    expect(left2.top).toBeGreaterThan(left1.top + left1.height);
+    expect(left2.top).toBe(right3.top);
+  });
+
   it("starts later Paperless group below taller prior pair", () => {
     const plan = buildLayout({
       selectedModules: ["SOA_BATCH", "SOA_BATCH_PAPERLESS", "PDF_PAPER", "AFP", "PDF_PAPERLESS", "AFP_PAPERLESS"],
