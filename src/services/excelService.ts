@@ -482,6 +482,37 @@ export const insertEvidence = async ({
       modulesWithImages.add(moduleId);
 
       const activeModules = [...modulesWithImages];
+      const managedBottom = Math.max(
+        0,
+        ...shapes.items
+          .filter((shape) => {
+            const parsed = parseImageShapeName(shape.name);
+            return parsed?.scenarioKey === targetScenarioKey &&
+              parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId).testTypeId === testTypeId;
+          })
+          .map((shape) => shape.top + shape.height),
+      );
+      const usedBottom = usedRange.isNullObject ? 0 : usedRange.top + usedRange.height;
+      const userContentFloor = existingManagedBases.length > 0 &&
+        usedBottom > managedBottom + LAYOUT_CONFIG.collisionGap
+        ? usedBottom + LAYOUT_CONFIG.groupGap
+        : 0;
+      const previousHeadings = new Map<string, ManagedHeadingMetadata>();
+      for (const metadata of metadataByName.values()) {
+        if (metadata.heading) previousHeadings.set(metadata.heading.address, metadata.heading);
+      }
+      const previousHeadingRanges = [...previousHeadings.values()].map((heading) => ({
+        heading,
+        range: sheet.getRange(heading.address),
+      }));
+      previousHeadingRanges.forEach(({ range }) => range.load("values"));
+      if (previousHeadingRanges.length > 0) await context.sync();
+      for (const { heading, range } of previousHeadingRanges) {
+        const value = range.values[0]?.[0];
+        if (value !== "" && value != null && value !== heading.text) {
+          throw new ExcelServiceError(`Heading cell ${heading.address} contains user content.`);
+        }
+      }
       const obstacles = shapes.items
         .filter((shape) => {
           if (sourceShape && shape.id === sourceShape.shapeId) return false;
@@ -494,7 +525,7 @@ export const insertEvidence = async ({
         .map((shape) => ({ left: shape.left, top: shape.top, width: shape.width, height: shape.height }));
       const requestedBaseTop =
         existingManagedBases.length > 0
-          ? Math.max(0, Math.min(...existingManagedBases))
+          ? Math.max(0, Math.min(...existingManagedBases), userContentFloor)
           : usedRange.isNullObject
             ? LAYOUT_CONFIG.groupGap
             : usedRange.top + usedRange.height + LAYOUT_CONFIG.groupGap;
@@ -507,17 +538,6 @@ export const insertEvidence = async ({
       });
 
       const shapeByName = new Map(shapes.items.map((shape) => [shape.name, shape]));
-
-      const previousHeadings = new Map<string, ManagedHeadingMetadata>();
-      for (const metadata of metadataByName.values()) {
-        if (metadata.heading) previousHeadings.set(metadata.heading.address, metadata.heading);
-      }
-      const previousHeadingRanges = [...previousHeadings.values()].map((heading) => ({
-        heading,
-        range: sheet.getRange(heading.address),
-      }));
-      previousHeadingRanges.forEach(({ range }) => range.load("values"));
-      if (previousHeadingRanges.length > 0) await context.sync();
 
       const headingRows = new Map<number, number>();
       const headingByGroupAndModule = new Map<string, ManagedHeadingMetadata>();
@@ -636,23 +656,122 @@ export const removeLastInsertedEvidence = async (
   return Excel.run(async (context) => {
     const sheet = context.workbook.worksheets.getItem(scenario.worksheetName);
     const shapes = sheet.shapes;
-    shapes.load("items/name,items/altTextDescription");
+    const leftRange = sheet.getRange(LAYOUT_CONFIG.leftAnchorRange);
+    const rightRange = sheet.getRange(LAYOUT_CONFIG.rightAnchorRange);
+    const fullRange = sheet.getRange(LAYOUT_CONFIG.fullAnchorRange);
+    const usedRange = sheet.getUsedRangeOrNullObject(true);
+    shapes.load("items/name,items/left,items/top,items/width,items/height,items/altTextDescription");
+    leftRange.load("left,width");
+    rightRange.load("left,width");
+    fullRange.load("left,width");
+    usedRange.load("top,height");
     await context.sync();
 
     const targetScenarioKey = scenarioKey(scenario.scenarioId);
     const candidates = shapes.items
-      .map((shape) => ({ shape, parsed: parseImageShapeName(shape.name) }))
+      .map((shape) => {
+        const parsed = parseImageShapeName(shape.name);
+        return {
+          shape,
+          parsed,
+          metadata: parsed ? parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId) : undefined,
+        };
+      })
       .filter(
         (item) =>
           item.parsed?.scenarioKey === targetScenarioKey &&
-          parseManagedMetadata(
-            item.shape.altTextDescription ?? "",
-            item.parsed.moduleId,
-          ).testTypeId === testTypeId,
+          item.metadata?.testTypeId === testTypeId,
       )
       .sort((a, b) => b.parsed!.sequence - a.parsed!.sequence);
     const latest = candidates[0];
-    if (!latest?.parsed) throw new ExcelServiceError("No add-in-created evidence exists for this scenario.");
+    if (!latest?.parsed || !latest.metadata) {
+      throw new ExcelServiceError("No add-in-created evidence exists for this scenario.");
+    }
+
+    const remaining = candidates.slice(1).filter(
+      (item): item is typeof item & { parsed: NonNullable<typeof item.parsed>; metadata: ManagedShapeMetadata } =>
+        Boolean(item.parsed && item.metadata),
+    );
+    const layoutImages: LayoutImage[] = remaining.map(({ shape, parsed, metadata }) => ({
+      name: shape.name,
+      moduleId: parsed.moduleId,
+      sequence: parsed.sequence,
+      naturalWidth: shape.width,
+      naturalHeight: shape.height,
+      caption: metadata.caption,
+      side: metadata.side,
+    }));
+    const originalBaseTop = Math.max(0, Math.min(...candidates.map(({ shape, parsed, metadata }) =>
+      shape.top - (parsed && metadata && hasManagedHeading(parsed.moduleId, metadata)
+        ? LAYOUT_CONFIG.headingHeight + LAYOUT_CONFIG.headingGap
+        : 0))));
+    const managedBottom = Math.max(0, ...candidates.map(({ shape }) => shape.top + shape.height));
+    const usedBottom = usedRange.isNullObject ? 0 : usedRange.top + usedRange.height;
+    const userContentFloor = usedBottom > managedBottom + LAYOUT_CONFIG.collisionGap
+      ? usedBottom + LAYOUT_CONFIG.groupGap
+      : 0;
+    const previousHeadings = new Map<string, ManagedHeadingMetadata>();
+    for (const { metadata } of candidates) {
+      if (metadata?.heading) previousHeadings.set(metadata.heading.address, metadata.heading);
+    }
+    const previousHeadingRanges = [...previousHeadings.values()].map((heading) => ({
+      heading,
+      range: sheet.getRange(heading.address),
+    }));
+    previousHeadingRanges.forEach(({ range }) => range.load("values"));
+    if (previousHeadingRanges.length > 0) await context.sync();
+    for (const { heading, range } of previousHeadingRanges) {
+      const value = range.values[0]?.[0];
+      if (value !== "" && value != null && value !== heading.text) {
+        throw new ExcelServiceError(`Heading cell ${heading.address} contains user content.`);
+      }
+    }
+    const obstacles = shapes.items
+      .filter((shape) => {
+        const parsed = parseImageShapeName(shape.name);
+        if (parsed?.scenarioKey === targetScenarioKey) {
+          return parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId).testTypeId !== testTypeId;
+        }
+        return !isManagedShapeName(shape.name);
+      })
+      .map((shape) => ({ left: shape.left, top: shape.top, width: shape.width, height: shape.height }));
+    const plan = buildLayout({
+      selectedModules: [...new Set(layoutImages.map((image) => image.moduleId))],
+      images: layoutImages,
+      anchors: anchorsFromRanges(leftRange, rightRange, fullRange),
+      requestedBaseTop: Math.max(originalBaseTop, userContentFloor),
+      obstacles,
+    });
+
+    const headingRows = new Map<number, number>();
+    const headingByGroupAndModule = new Map<string, ManagedHeadingMetadata>();
+    const pendingHeadings: Array<{
+      heading: (typeof plan.headings)[number];
+      cell: Excel.Range;
+      address: string;
+    }> = [];
+    for (const heading of plan.headings) {
+      let rowIndex = headingRows.get(heading.top);
+      if (rowIndex === undefined) {
+        rowIndex = await resolveRowAtTop(context, sheet, heading.top);
+        headingRows.set(heading.top, rowIndex);
+      }
+      const columnIndex = EVIDENCE_MODULES[heading.moduleId].placement === "right" ? 5 : 0;
+      const cell = sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1);
+      const address = `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
+      cell.load("values");
+      pendingHeadings.push({ heading, cell, address });
+    }
+    if (pendingHeadings.length > 0) await context.sync();
+
+    for (const { cell, address } of pendingHeadings) {
+      const value = cell.values[0]?.[0];
+      const previousHeading = previousHeadings.get(address);
+      const isOwnedHeading = previousHeading && value === previousHeading.text;
+      if (value !== "" && value != null && !isOwnedHeading) {
+        throw new ExcelServiceError(`Heading cell ${address} contains user content.`);
+      }
+    }
 
     const captionName = captionShapeName(
       scenario.scenarioId,
@@ -661,38 +780,35 @@ export const removeLastInsertedEvidence = async (
     );
     const captionShape = shapes.getItemOrNullObject(captionName);
     captionShape.load("name");
-    const latestMetadata = parseManagedMetadata(
-      latest.shape.altTextDescription ?? "",
-      latest.parsed.moduleId,
-    );
-    const matchingGroupRemains = latestMetadata.heading
-      ? candidates.slice(1).some((candidate) => {
-          if (!candidate.parsed) return false;
-          const metadata = parseManagedMetadata(
-            candidate.shape.altTextDescription ?? "",
-            candidate.parsed.moduleId,
-          );
-          return (
-            metadata.heading?.address === latestMetadata.heading?.address &&
-            metadata.heading?.text === latestMetadata.heading?.text
-          );
-        })
-      : false;
-    const headingRange =
-      !matchingGroupRemains && latestMetadata.heading
-        ? sheet.getRange(latestMetadata.heading.address)
-        : undefined;
-    headingRange?.load("values");
     await context.sync();
 
+    for (const { heading, range } of previousHeadingRanges) {
+      if (range.values[0]?.[0] === heading.text) range.clear("All");
+    }
     latest.shape.delete();
     if (!captionShape.isNullObject) captionShape.delete();
-    if (
-      headingRange &&
-      latestMetadata.heading &&
-      headingRange.values[0]?.[0] === latestMetadata.heading.text
-    ) {
-      headingRange.clear("All");
+
+    for (const { heading, cell, address } of pendingHeadings) {
+      cell.formulas = [[toLiteralCellFormula(heading.text)]];
+      cell.format.fill.color = LAYOUT_CONFIG.headingFillColor;
+      cell.format.font.bold = true;
+      cell.format.font.color = LAYOUT_CONFIG.headingFontColor;
+      headingByGroupAndModule.set(`${heading.groupKey}|${heading.moduleId}`, { address, text: heading.text });
+    }
+    const remainingByName = new Map(remaining.map((item) => [item.shape.name, item]));
+    for (const placement of plan.images) {
+      const item = remainingByName.get(placement.name);
+      if (!item) throw new ExcelServiceError(`Managed image "${placement.name}" is missing.`);
+      item.shape.lockAspectRatio = false;
+      setShapeRectangle(item.shape, placement);
+      item.shape.lockAspectRatio = true;
+      item.shape.altTextDescription = JSON.stringify({
+        version: MANAGED_METADATA_VERSION,
+        testTypeId,
+        caption: item.metadata.caption,
+        side: placement.moduleId === "GENERIC_SCREENSHOT" ? item.metadata.side ?? "left" : undefined,
+        heading: headingByGroupAndModule.get(`${placement.groupKey}|${placement.moduleId}`),
+      } satisfies ManagedShapeMetadata);
     }
     await context.sync();
     return latest.shape.name;

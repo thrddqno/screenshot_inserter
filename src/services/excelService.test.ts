@@ -101,6 +101,12 @@ const createHost = () => {
     D2: statusRange,
     D3: semanticStatusRange,
   };
+  const usedRange = {
+    top: 0,
+    height: 300,
+    isNullObject: false,
+    load: vi.fn(),
+  };
   const getCell = (rowIndex: number, columnIndex: number) => {
       const key = `${rowIndex}:${columnIndex}`;
       let cell = headingCells.get(key);
@@ -141,12 +147,7 @@ const createHost = () => {
       return getCell(Number(match[2]) - 1, match[1] === "F" ? 5 : 0);
     }),
     getRangeByIndexes: vi.fn((rowIndex: number, columnIndex: number) => getCell(rowIndex, columnIndex)),
-    getUsedRangeOrNullObject: vi.fn(() => ({
-      top: 0,
-      height: 300,
-      isNullObject: false,
-      load: vi.fn(),
-    })),
+    getUsedRangeOrNullObject: vi.fn(() => usedRange),
   };
   const context = {
     workbook: { worksheets: { getItem: vi.fn(() => sheet) } },
@@ -154,7 +155,7 @@ const createHost = () => {
   };
   vi.stubGlobal("Office", {});
   vi.stubGlobal("Excel", { run: (callback: (value: typeof context) => unknown) => callback(context) });
-  return { items, legacyShape, statusRange, semanticStatusRange, headingCells, addTextBox: shapes.addTextBox, sheet };
+  return { items, legacyShape, statusRange, semanticStatusRange, headingCells, addTextBox: shapes.addTextBox, sheet, usedRange };
 };
 
 describe("Excel evidence service", () => {
@@ -612,12 +613,64 @@ describe("Excel evidence service", () => {
     expect(afp.top).toBeGreaterThan(soa.top + soa.height);
   });
 
+  it("reflows remaining evidence without moving stable chronological groups", async () => {
+    const host = createHost();
+    const pdfName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+    });
+    await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "INVOICING",
+      image,
+      caption: "",
+    });
+    const pdf = host.items.find((shape) => shape.name === pdfName)!;
+    const beforeRemove = pdf.top;
+
+    await removeLastInsertedEvidence(scenario, "SOA");
+
+    expect(pdf.top).toBe(beforeRemove);
+    expect(pdf.left).toBe(0);
+    expect(pdf.lockAspectRatio).toBe(true);
+    expect(host.legacyShape.delete).not.toHaveBeenCalled();
+  });
+
   it("allows unlimited screenshots for one evidence type", async () => {
     const host = createHost();
     await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "INVOICING", image, caption: "" });
     await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "INVOICING", image, caption: "" });
 
     expect(host.items.filter((shape) => shape.name.startsWith("EV__TS4_1_1__INVOICING__"))).toHaveLength(2);
+  });
+
+  it("moves managed evidence below user cell content appended after existing images", async () => {
+    const host = createHost();
+    const firstName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "INVOICING",
+      image,
+      caption: "",
+    });
+    const first = host.items.find((shape) => shape.name === firstName)!;
+    const originalTop = first.top;
+    host.usedRange.height = first.top + first.height + 100;
+
+    await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "INVOICING",
+      image,
+      caption: "",
+    });
+
+    expect(first.top).toBeGreaterThan(originalTop);
+    expect(first.top).toBeGreaterThanOrEqual(host.usedRange.height);
   });
 
   it.each<GenericSide>(["left", "right"])("keeps blank-header Generic %s group fixed after repeated insertions", async (side) => {

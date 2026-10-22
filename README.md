@@ -90,7 +90,7 @@ Some Microsoft 365 builds also expose **Upload My Add-in** directly.
 
 Changing selected row while already on `Summary` does not activate another worksheet. Use refresh icon after changing Summary row.
 
-Images are appended below all existing non-add-in shapes. Existing `Picture N` objects are not changed unless the tester explicitly selects a temporary pasted object through **Use pasted Excel picture**; that temporary object is removed only after its managed evidence copy is inserted.
+Images are appended below all existing non-add-in shapes. Existing `Picture N` objects are not changed unless the tester explicitly selects a temporary pasted object through **Use pasted Excel picture**; that temporary object is removed only after its managed evidence copy is inserted. If user cell content is added below an existing managed image block, the next insertion moves the managed block below that content.
 
 Test Type, Status, and each profile's last Evidence Type, Generic Side, and Header are stored in Excel workbook settings. A workbook without saved choices defaults to `General` and `PASS/FAIL` Status. Changing Test Type restores that profile's choices while keeping pending screenshot and Status. Scenario refresh preserves Evidence Type, Side, and Header; recognized worksheet Status takes precedence. General and SOA evidence are isolated: one profile does not reflow or remove another profile's images.
 
@@ -117,7 +117,7 @@ EV__SCENARIO_ID__MODULE_ID__SEQUENCE
 EV__TS4_1_1__PDF_PAPER__001
 ```
 
-**Remove Last Inserted** deletes only highest-sequence `EV__...` image for selected Test Type. Backward-compatible cleanup also removes matching legacy `EVC__...` caption shape if present.
+**Remove Last Inserted** deletes only highest-sequence `EV__...` image for selected Test Type. Remaining managed groups compact upward while preserving pair alignment and staying below non-add-in shapes and user cell content appended below the managed block. Backward-compatible cleanup also removes matching legacy `EVC__...` caption shape if present.
 
 New evidence headings use worksheet cells, not shapes:
 
@@ -222,5 +222,5 @@ Company rollout should use approved internal HTTPS hosting or private GitHub Ent
 - Only first milestone layouts are validated in configuration.
 - Real Excel host acceptance must run on Windows Excel and Excel for web.
 - Excel copies worksheet pictures as Office drawing objects that task-pane clipboard APIs cannot read directly. Cross-workbook transfer therefore requires a temporary native Excel paste onto the destination worksheet before selecting **Use pasted Excel picture**.
-- Removed evidence leaves managed heading cells in place; no unrelated content is touched.
+- Manual position changes to add-in-managed images are normalized during the next insertion or removal; unrelated shapes remain untouched.
 - Evidence count is not updated because reference workbook defines no configured count cell.

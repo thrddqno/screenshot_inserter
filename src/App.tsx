@@ -13,7 +13,11 @@ import {
   subscribeWorksheetActivated,
   updateScenarioStatus,
 } from "./services/excelService";
-import { getImageFromClipboard, ImageValidationError } from "./services/imageValidation";
+import {
+  clipboardContainsFiles,
+  getImageFromClipboard,
+  ImageValidationError,
+} from "./services/imageValidation";
 import {
   DEFAULT_WORKBOOK_PREFERENCES,
   readWorkbookPreferences,
@@ -53,6 +57,7 @@ export default function App() {
   const [status, setStatus] = useState<EvidenceStatus>("PASS/FAIL");
   const [refreshing, setRefreshing] = useState(false);
   const [operationBusy, setOperationBusy] = useState(false);
+  const [pasteBusy, setPasteBusy] = useState(false);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [preferenceWarning, setPreferenceWarning] = useState<string | null>(null);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
@@ -68,6 +73,11 @@ export default function App() {
   const updateCheckRunningRef = useRef(false);
   const pictureSelectionArmedRef = useRef(false);
   const pictureSubscriptionRef = useRef<WorkbookPictureSubscription | null>(null);
+  const workbookOperationRef = useRef(false);
+  const deferredRefreshRef = useRef(false);
+  const pasteGenerationRef = useRef(0);
+  const pendingImageRef = useRef<PendingImage | null>(null);
+  const pendingWorkbookPictureRef = useRef<WorkbookPictureReference | null>(null);
 
   const selectedProfile = TEST_TYPE_PROFILES[testTypeId];
   const availableModules = selectedProfile.moduleIds
@@ -117,6 +127,34 @@ export default function App() {
       refreshRunningRef.current = false;
       if (mountedRef.current) setRefreshing(false);
     }
+  }, []);
+
+  const finishWorkbookOperation = useCallback(() => {
+    workbookOperationRef.current = false;
+    if (mountedRef.current) setOperationBusy(false);
+    if (deferredRefreshRef.current) {
+      deferredRefreshRef.current = false;
+      void refreshScenario(true);
+    }
+  }, [refreshScenario]);
+
+  const beginWorkbookOperation = useCallback((): boolean => {
+    if (workbookOperationRef.current) return false;
+    workbookOperationRef.current = true;
+    setOperationBusy(true);
+    return true;
+  }, []);
+
+  const replacePendingImage = useCallback((
+    next: PendingImage | null,
+    workbookPicture: WorkbookPictureReference | null = null,
+  ) => {
+    const previous = pendingImageRef.current;
+    pendingImageRef.current = next;
+    pendingWorkbookPictureRef.current = workbookPicture;
+    setPendingImage(next);
+    setPendingWorkbookPicture(workbookPicture);
+    if (previous && previous !== next) URL.revokeObjectURL(previous.previewUrl);
   }, []);
 
   const flushPreferences = useCallback(async () => {
@@ -177,6 +215,38 @@ export default function App() {
     }, debounce);
   }, [queuePreferences, testTypeId]);
 
+  const acceptImage = useCallback(async (
+    readImage: () => Promise<PendingImage>,
+    progressMessage: string,
+    workbookPicture: WorkbookPictureReference | null = null,
+    successMessage?: string,
+  ) => {
+    const generation = ++pasteGenerationRef.current;
+    pictureSelectionArmedRef.current = false;
+    setPictureSelectionArmed(false);
+    setPasteBusy(true);
+    setMessage({ kind: "info", text: progressMessage });
+    try {
+      const image = await readImage();
+      if (!mountedRef.current || generation !== pasteGenerationRef.current) {
+        URL.revokeObjectURL(image.previewUrl);
+        return;
+      }
+      replacePendingImage(image, workbookPicture);
+      setMessage({
+        kind: "success",
+        text: successMessage ??
+          `Screenshot ready: ${image.width}×${image.height}, ${(image.size / 1024).toFixed(1)} KB.`,
+      });
+    } catch (error) {
+      if (!mountedRef.current || generation !== pasteGenerationRef.current) return;
+      const text = error instanceof ImageValidationError ? error.message : errorMessage(error);
+      setMessage({ kind: "error", text });
+    } finally {
+      if (mountedRef.current && generation === pasteGenerationRef.current) setPasteBusy(false);
+    }
+  }, [replacePendingImage]);
+
   useEffect(() => {
     mountedRef.current = true;
     let disposed = false;
@@ -212,27 +282,16 @@ export default function App() {
         try {
           pictureSubscription = await subscribeWorkbookPictureActivated(async (picture) => {
             if (disposed || !pictureSelectionArmedRef.current) return;
-            pictureSelectionArmedRef.current = false;
-            setPictureSelectionArmed(false);
-            setOperationBusy(true);
-            setMessage({ kind: "info", text: `Reading pasted Excel picture ${picture.name}…` });
-            try {
-              const image = await getWorkbookPicturePreview(picture);
-              if (disposed) {
-                URL.revokeObjectURL(image.previewUrl);
-                return;
-              }
-              setPendingImage((current) => {
-                if (current) URL.revokeObjectURL(current.previewUrl);
-                return image;
-              });
-              setPendingWorkbookPicture(picture);
-              setMessage({ kind: "success", text: `Pasted Excel picture ready: ${picture.name}.` });
-            } catch (error) {
-              if (!disposed) setMessage({ kind: "error", text: errorMessage(error) });
-            } finally {
-              if (!disposed) setOperationBusy(false);
+            if (workbookOperationRef.current) {
+              setMessage({ kind: "error", text: "Wait for workbook operation to finish before selecting a picture." });
+              return;
             }
+            await acceptImage(
+              () => getWorkbookPicturePreview(picture),
+              `Reading pasted Excel picture ${picture.name}…`,
+              picture,
+              `Pasted Excel picture ready: ${picture.name}.`,
+            );
           });
           if (disposed) {
             void pictureSubscription.unsubscribe().catch(() => undefined);
@@ -245,7 +304,12 @@ export default function App() {
 
         try {
           const removeHandler = await subscribeWorksheetActivated(async () => {
-            if (!disposed) await refreshScenario(true);
+            if (disposed) return;
+            if (workbookOperationRef.current) {
+              deferredRefreshRef.current = true;
+              return;
+            }
+            await refreshScenario(true);
           });
           if (disposed) {
             void removeHandler().catch(() => undefined);
@@ -266,13 +330,18 @@ export default function App() {
       mountedRef.current = false;
       pictureSelectionArmedRef.current = false;
       pictureSubscriptionRef.current = null;
+      pasteGenerationRef.current += 1;
+      const pending = pendingImageRef.current;
+      pendingImageRef.current = null;
+      pendingWorkbookPictureRef.current = null;
+      if (pending) URL.revokeObjectURL(pending.previewUrl);
       if (preferenceWriteTimerRef.current !== undefined) {
         window.clearTimeout(preferenceWriteTimerRef.current);
       }
       if (unsubscribe) void unsubscribe().catch(() => undefined);
       if (pictureSubscription) void pictureSubscription.unsubscribe().catch(() => undefined);
     };
-  }, [refreshScenario]);
+  }, [acceptImage, refreshScenario]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -299,65 +368,30 @@ export default function App() {
     };
   }, []);
 
-  const acceptImage = useCallback(async (
-    readImage: () => Promise<PendingImage>,
-    progressMessage: string,
-  ) => {
-    pictureSelectionArmedRef.current = false;
-    setPictureSelectionArmed(false);
-    setOperationBusy(true);
-    setMessage({ kind: "info", text: progressMessage });
-    try {
-      const image = await readImage();
-      setPendingImage((current) => {
-        if (current) URL.revokeObjectURL(current.previewUrl);
-        return image;
-      });
-      setPendingWorkbookPicture(null);
-      setMessage({
-        kind: "success",
-        text: `Screenshot ready: ${image.width}×${image.height}, ${(image.size / 1024).toFixed(1)} KB.`,
-      });
-    } catch (error) {
-      const text = error instanceof ImageValidationError ? error.message : errorMessage(error);
-      setMessage({ kind: "error", text });
-    } finally {
-      setOperationBusy(false);
-    }
-  }, []);
-
   const acceptClipboard = useCallback(async (clipboardData: DataTransfer | null) => {
     await acceptImage(() => getImageFromClipboard(clipboardData), "Reading pasted picture…");
   }, [acceptImage]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
-      const containsSupportedImage = [...(event.clipboardData?.items ?? [])].some(
-        (item) => item.kind === "file" && ["image/png", "image/jpeg"].includes(item.type),
-      );
-      if (!containsSupportedImage) return;
+      if (!clipboardContainsFiles(event.clipboardData)) return;
       event.preventDefault();
+      if (workbookOperationRef.current) {
+        setMessage({ kind: "error", text: "Wait for workbook operation to finish before pasting." });
+        return;
+      }
       void acceptClipboard(event.clipboardData);
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
   }, [acceptClipboard]);
 
-  useEffect(
-    () => () => {
-      if (pendingImage) URL.revokeObjectURL(pendingImage.previewUrl);
-    },
-    [pendingImage],
-  );
-
   const clearPending = () => {
     pictureSelectionArmedRef.current = false;
     setPictureSelectionArmed(false);
-    setPendingImage((current) => {
-      if (current) URL.revokeObjectURL(current.previewUrl);
-      return null;
-    });
-    setPendingWorkbookPicture(null);
+    pasteGenerationRef.current += 1;
+    setPasteBusy(false);
+    replacePendingImage(null);
     setMessage({ kind: "info", text: "Pending screenshot cleared." });
   };
 
@@ -368,7 +402,7 @@ export default function App() {
       setMessage({ kind: "info", text: "Pasted picture selection cancelled." });
       return;
     }
-    setOperationBusy(true);
+    if (!beginWorkbookOperation()) return;
     setMessage({ kind: "info", text: "Finding pasted Excel pictures…" });
     try {
       const subscription = pictureSubscriptionRef.current;
@@ -380,41 +414,44 @@ export default function App() {
     } catch (error) {
       setMessage({ kind: "error", text: errorMessage(error) });
     } finally {
-      setOperationBusy(false);
+      finishWorkbookOperation();
     }
   };
 
   const handleInsert = async () => {
-    if (!scenario || !pendingImage) return;
-    setOperationBusy(true);
+    const imageIntent = pendingImageRef.current;
+    const scenarioIntent = scenario;
+    if (!scenarioIntent || !imageIntent || !beginWorkbookOperation()) return;
+    const insertIntent = {
+      scenario: scenarioIntent,
+      testTypeId,
+      moduleId: evidenceType,
+      image: imageIntent,
+      caption: evidenceType === "GENERIC_SCREENSHOT" ? caption : "",
+      side: evidenceType === "GENERIC_SCREENSHOT" ? genericSide : undefined,
+      sourceShape: pendingWorkbookPictureRef.current ?? undefined,
+    } as const;
     setMessage({ kind: "info", text: "Inserting screenshot…" });
     try {
-      const name = await insertEvidence({
-        scenario,
-        testTypeId,
-        moduleId: evidenceType,
-        image: pendingImage,
-        caption: evidenceType === "GENERIC_SCREENSHOT" ? caption : "",
-        side: evidenceType === "GENERIC_SCREENSHOT" ? genericSide : undefined,
-        sourceShape: pendingWorkbookPicture ?? undefined,
-      });
-      URL.revokeObjectURL(pendingImage.previewUrl);
-      setPendingImage(null);
-      setPendingWorkbookPicture(null);
-      setMessage({ kind: "success", text: `Inserted ${name}.` });
+      const name = await insertEvidence(insertIntent);
+      if (pendingImageRef.current === imageIntent) replacePendingImage(null);
+      setMessage({ kind: "success", text: `Inserted ${name} into ${scenarioIntent.worksheetName}.` });
     } catch (error) {
       setMessage({ kind: "error", text: errorMessage(error) });
     } finally {
-      setOperationBusy(false);
+      finishWorkbookOperation();
     }
   };
 
   const handleStatusChange = async (nextStatus: Exclude<EvidenceStatus, "UNCHANGED">) => {
     const previousStatus = status;
+    if (!beginWorkbookOperation()) return;
     setStatus(nextStatus);
-    if (!scenario) return;
+    if (!scenario) {
+      finishWorkbookOperation();
+      return;
+    }
 
-    setOperationBusy(true);
     setMessage({ kind: "info", text: "Updating worksheet Status…" });
     try {
       await updateScenarioStatus(scenario, nextStatus);
@@ -425,25 +462,25 @@ export default function App() {
       setStatus(previousStatus);
       setMessage({ kind: "error", text: errorMessage(error) });
     } finally {
-      setOperationBusy(false);
+      finishWorkbookOperation();
     }
   };
 
   const handleRemove = async () => {
-    if (!scenario) return;
-    setOperationBusy(true);
+    const scenarioIntent = scenario;
+    if (!scenarioIntent || !beginWorkbookOperation()) return;
     setMessage({ kind: "info", text: "Removing screenshot…" });
     try {
-      const name = await removeLastInsertedEvidence(scenario, testTypeId);
+      const name = await removeLastInsertedEvidence(scenarioIntent, testTypeId);
       setMessage({ kind: "success", text: `Removed ${name}.` });
     } catch (error) {
       setMessage({ kind: "error", text: errorMessage(error) });
     } finally {
-      setOperationBusy(false);
+      finishWorkbookOperation();
     }
   };
 
-  const busy = !preferencesLoaded || refreshing || operationBusy;
+  const busy = !preferencesLoaded || refreshing || operationBusy || pasteBusy;
 
   return (
     <main className="app-shell">

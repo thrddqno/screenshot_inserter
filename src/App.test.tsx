@@ -293,7 +293,7 @@ describe("task pane", () => {
     await screen.findByAltText("Pending screenshot preview");
     fireEvent.click(screen.getByRole("button", { name: "Insert" }));
 
-    await screen.findByText("Inserted EV__TS6_1__GENERIC_SCREENSHOT__001.");
+    await screen.findByText("Inserted EV__TS6_1__GENERIC_SCREENSHOT__001 into TS6.1.");
     expect(screen.getByLabelText("Header")).toHaveValue("Persistent Header");
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ caption: "Persistent Header" }));
   });
@@ -353,7 +353,7 @@ describe("task pane", () => {
     expect(await screen.findByAltText("Pending screenshot preview")).toBeVisible();
     expect(screen.getByText("Worksheet picture: Picture 7")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Insert" }));
-    await screen.findByText("Inserted EV__TS7_1__GENERIC_SCREENSHOT__001.");
+    await screen.findByText("Inserted EV__TS7_1__GENERIC_SCREENSHOT__001 into Destination.");
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ sourceShape: pastedPicture }));
   });
 
@@ -476,5 +476,65 @@ describe("task pane", () => {
     expect(updateButton).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Clear Pending" }));
     expect(updateButton).toBeEnabled();
+  });
+
+  it("keeps latest screenshot when rapid pastes finish out of order", async () => {
+    vi.stubGlobal("Office", undefined);
+    vi.stubGlobal("Excel", undefined);
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, revokeObjectURL });
+    let resolveFirst!: (image: Awaited<ReturnType<typeof imageValidation.getImageFromClipboard>>) => void;
+    let resolveSecond!: (image: Awaited<ReturnType<typeof imageValidation.getImageFromClipboard>>) => void;
+    const first = new Promise<Awaited<ReturnType<typeof imageValidation.getImageFromClipboard>>>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<Awaited<ReturnType<typeof imageValidation.getImageFromClipboard>>>((resolve) => {
+      resolveSecond = resolve;
+    });
+    vi.spyOn(imageValidation, "getImageFromClipboard")
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+
+    render(<App />);
+    const clipboardData = { items: [{ kind: "file", type: "image/png" }], files: [] };
+    fireEvent.paste(document, { clipboardData });
+    fireEvent.paste(document, { clipboardData });
+    await act(async () => resolveSecond({
+      base64: "second",
+      mimeType: "image/png",
+      size: 2,
+      width: 20,
+      height: 20,
+      previewUrl: "blob:second",
+    }));
+    expect(await screen.findByAltText("Pending screenshot preview")).toHaveAttribute("src", "blob:second");
+
+    await act(async () => resolveFirst({
+      base64: "first",
+      mimeType: "image/png",
+      size: 1,
+      width: 10,
+      height: 10,
+      previewUrl: "blob:first",
+    }));
+    expect(screen.getByAltText("Pending screenshot preview")).toHaveAttribute("src", "blob:second");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:first");
+  });
+
+  it("reports unsupported clipboard files instead of silently ignoring paste", async () => {
+    vi.stubGlobal("Office", undefined);
+    vi.stubGlobal("Excel", undefined);
+    vi.spyOn(imageValidation, "getImageFromClipboard").mockRejectedValue(
+      new imageValidation.ImageValidationError("Clipboard contains no browser-accessible PNG or JPEG screenshot."),
+    );
+
+    render(<App />);
+    fireEvent.paste(document, {
+      clipboardData: { items: [{ kind: "file", type: "image/gif" }], files: [] },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Clipboard contains no browser-accessible PNG or JPEG screenshot.",
+    );
   });
 });
