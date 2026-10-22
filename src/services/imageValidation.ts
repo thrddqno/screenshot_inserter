@@ -98,8 +98,36 @@ export const getImageFromClipboard = async (clipboardData: DataTransfer | null):
   const item = imageItems.find((candidate) =>
     (IMAGE_LIMITS.acceptedMimeTypes as readonly string[]).includes(candidate.type),
   );
-  if (!item) throw new ImageValidationError("Clipboard contains no PNG or JPEG screenshot.");
+  if (!item) {
+    throw new ImageValidationError(
+      "Clipboard contains no PNG or JPEG image. Select the Excel picture itself, copy it, then paste here.",
+    );
+  }
   const file = item.getAsFile();
   if (!file) throw new ImageValidationError("Clipboard screenshot could not be read.");
   return createPendingImage(file);
+};
+
+export const getImageFromSystemClipboard = async (): Promise<PendingImage> => {
+  if (!navigator.clipboard?.read) {
+    throw new ImageValidationError("Clipboard reading is unavailable. Focus the task pane and press Ctrl+V instead.");
+  }
+
+  let clipboardItems: ClipboardItems;
+  try {
+    clipboardItems = await navigator.clipboard.read();
+  } catch {
+    throw new ImageValidationError("Clipboard access was denied. Focus the task pane and press Ctrl+V instead.");
+  }
+
+  for (const clipboardItem of clipboardItems) {
+    const mimeType = clipboardItem.types.find((type) =>
+      (IMAGE_LIMITS.acceptedMimeTypes as readonly string[]).includes(type),
+    );
+    if (mimeType) return createPendingImage(await clipboardItem.getType(mimeType));
+  }
+
+  throw new ImageValidationError(
+    "Clipboard contains no PNG or JPEG image. Select the Excel picture itself, copy it, then try again.",
+  );
 };

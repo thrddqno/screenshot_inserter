@@ -15,10 +15,6 @@ const preferences = (testTypeId: TestTypeId) => ({
 describe("task pane", () => {
   beforeEach(() => {
     vi.spyOn(updateService, "checkForAppUpdate").mockResolvedValue(null);
-    vi.spyOn(excelService, "subscribeWorkbookPictureActivated").mockResolvedValue({
-      refresh: vi.fn(async () => undefined),
-      unsubscribe: vi.fn(async () => undefined),
-    });
   });
 
   afterEach(() => {
@@ -40,6 +36,7 @@ describe("task pane", () => {
     expect(screen.getByRole("heading", { name: "Screenshot to Insert" })).toBeVisible();
     expect(screen.getByText("Not loaded")).toBeVisible();
     expect(screen.getByText("Press Ctrl+V")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Paste copied picture" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Insert" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove Last Inserted" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear Pending" })).toBeDisabled();
@@ -297,22 +294,8 @@ describe("task pane", () => {
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ caption: "Persistent Header" }));
   });
 
-  it("selects an Excel picture and inserts a copied workbook shape", async () => {
+  it("pastes a picture copied from another workbook", async () => {
     vi.stubGlobal("URL", { ...URL, revokeObjectURL: vi.fn() });
-    const sourcePicture = {
-      worksheetId: "source-sheet",
-      shapeId: "picture-7",
-      name: "Picture 7",
-    };
-    let pictureHandler: excelService.WorkbookPictureActivatedHandler | undefined;
-    const refreshPictures = vi.fn(async () => undefined);
-    vi.mocked(excelService.subscribeWorkbookPictureActivated).mockImplementation(async (handler) => {
-      pictureHandler = handler;
-      return {
-        refresh: refreshPictures,
-        unsubscribe: vi.fn(async () => undefined),
-      };
-    });
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
     vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
       preferences: preferences("GENERAL"),
@@ -322,38 +305,32 @@ describe("task pane", () => {
     vi.spyOn(excelService, "readCurrentScenario").mockResolvedValue({
       kind: "loaded",
       scenario: {
-        worksheetName: "TS6.1",
-        scenarioId: "TS6.1",
+        worksheetName: "Destination",
+        scenarioId: "TS7.1",
         condition: "Condition",
         expectedResult: "Result",
       },
     });
-    vi.spyOn(excelService, "getWorkbookPicturePreview").mockResolvedValue({
+    vi.spyOn(imageValidation, "getImageFromSystemClipboard").mockResolvedValue({
       base64: "iVBORw0KGgo=",
       mimeType: "image/png",
-      size: 100,
-      width: 640,
-      height: 480,
-      previewUrl: "blob:excel-picture",
+      size: 200,
+      width: 900,
+      height: 600,
+      previewUrl: "blob:cross-workbook",
     });
     const insert = vi.spyOn(excelService, "insertEvidence").mockResolvedValue(
-      "EV__TS6_1__GENERIC_SCREENSHOT__001",
+      "EV__TS7_1__GENERIC_SCREENSHOT__001",
     );
 
     render(<App />);
-    await screen.findByText("TS6.1");
-    fireEvent.click(screen.getByRole("button", { name: "Select Excel picture" }));
-    expect(await screen.findByText("Click a picture in any worksheet to select it.")).toBeVisible();
-    expect(refreshPictures).toHaveBeenCalled();
+    await screen.findByText("TS7.1");
+    fireEvent.click(screen.getByRole("button", { name: "Paste copied picture" }));
 
-    await act(async () => {
-      await pictureHandler?.(sourcePicture);
-    });
-    expect(await screen.findByText("From workbook: Picture 7")).toBeVisible();
+    expect(await screen.findByAltText("Pending screenshot preview")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Insert" }));
-
-    await screen.findByText("Inserted EV__TS6_1__GENERIC_SCREENSHOT__001.");
-    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ sourceShape: sourcePicture }));
+    await screen.findByText("Inserted EV__TS7_1__GENERIC_SCREENSHOT__001.");
+    expect(insert.mock.calls[0][0]).not.toHaveProperty("sourceShape");
   });
 
   it("serializes rapid Test Type saves so latest choice wins", async () => {

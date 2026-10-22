@@ -66,9 +66,3 @@ export interface PendingImage {
   height: number;
   previewUrl: string;
 }
-
-export interface WorkbookPictureReference {
-  worksheetId: string;
-  shapeId: string;
-  name: string;
-}
