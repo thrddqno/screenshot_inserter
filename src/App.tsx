@@ -623,7 +623,7 @@ export default function App() {
         </div>
         <div className="capture-source-actions">
           <button
-            className="button button-primary"
+            className="button button-secondary"
             type="button"
             disabled={busy}
             onClick={() => void handleUsePastedPicture()}

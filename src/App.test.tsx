@@ -40,7 +40,7 @@ describe("task pane", () => {
     expect(screen.getByRole("heading", { name: "Screenshot to Insert" })).toBeVisible();
     expect(screen.getByText("Not loaded")).toBeVisible();
     expect(screen.getByText("Press Ctrl+V")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Use pasted Excel picture" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Use pasted Excel picture" })).toHaveClass("button-secondary");
     expect(screen.getByRole("button", { name: "Insert" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove Last Inserted" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear Pending" })).toBeDisabled();
