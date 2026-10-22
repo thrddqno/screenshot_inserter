@@ -1,11 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { buildLayout, rectanglesIntersect, type LayoutAnchors } from "./layoutEngine";
+import {
+  buildLayout,
+  rectanglesIntersect,
+  type ImagePlacement,
+  type LayoutAnchors,
+  type LayoutImage,
+} from "./layoutEngine";
 
 const anchors: LayoutAnchors = {
   left: { left: 0, top: 0, width: 400, height: 0 },
   right: { left: 420, top: 0, width: 400, height: 0 },
   full: { left: 0, top: 0, width: 400, height: 0 },
 };
+
+const expectChronologicalOrder = (placements: readonly ImagePlacement[], names: readonly string[]) => {
+  expect(
+    [...placements]
+      .sort((a, b) => a.top - b.top || a.left - b.left)
+      .map((placement) => placement.name),
+  ).toEqual(names);
+  for (let first = 0; first < placements.length; first += 1) {
+    for (let second = first + 1; second < placements.length; second += 1) {
+      expect(rectanglesIntersect(placements[first], placements[second])).toBe(false);
+    }
+  }
+};
+
+const imagesFor = (moduleIds: readonly LayoutImage["moduleId"][]): LayoutImage[] =>
+  moduleIds.map((moduleId, index) => ({
+    name: `${index + 1}-${moduleId}`,
+    moduleId,
+    sequence: index + 1,
+    naturalWidth: 320 + index * 130,
+    naturalHeight: 240 + ((index * 170) % 700),
+    caption: moduleId === "GENERIC_SCREENSHOT" ? "Generic" : "",
+    side: moduleId === "GENERIC_SCREENSHOT" ? "left" : undefined,
+  }));
 
 describe("buildLayout", () => {
   it("pairs PDF and AFP at the same top without overlap", () => {
@@ -172,15 +202,12 @@ describe("buildLayout", () => {
     expect(plan.images[1].top).toBeGreaterThan(plan.images[0].top + plan.images[0].height);
   });
 
-  it.each([
-    ["left", "right"],
-    ["right", "left"],
-  ] as const)("pairs consecutive Generic %s then %s screenshots", (firstSide, secondSide) => {
+  it("pairs consecutive Generic left then right screenshots", () => {
     const plan = buildLayout({
       selectedModules: ["GENERIC_SCREENSHOT"],
       images: [
-        { name: "first", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "Pair", side: firstSide },
-        { name: "second", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 300, caption: "Pair", side: secondSide },
+        { name: "first", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "Pair", side: "left" },
+        { name: "second", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 300, caption: "Pair", side: "right" },
       ],
       anchors,
       requestedBaseTop: 0,
@@ -189,8 +216,24 @@ describe("buildLayout", () => {
     const first = plan.images.find((item) => item.name === "first")!;
     const second = plan.images.find((item) => item.name === "second")!;
     expect(first.top).toBe(second.top);
-    expect(plan.images.find((item) => item.name === (firstSide === "left" ? "first" : "second"))).toMatchObject({ left: 0, width: 400 });
-    expect(plan.images.find((item) => item.name === (firstSide === "right" ? "first" : "second"))).toMatchObject({ left: 420, width: 400 });
+    expect(first).toMatchObject({ left: 0, width: 400 });
+    expect(second).toMatchObject({ left: 420, width: 400 });
+  });
+
+  it("does not reverse chronological order to align Generic right then left screenshots", () => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT"],
+      images: [
+        { name: "right-first", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "Pair", side: "right" },
+        { name: "left-second", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 300, caption: "Pair", side: "left" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+    const first = plan.images.find((item) => item.name === "right-first")!;
+    const second = plan.images.find((item) => item.name === "left-second")!;
+    expect(second.top).toBeGreaterThan(first.top + first.height);
   });
 
   it("starts a new row for same-side Generic images then pairs latest incomplete row", () => {
@@ -310,5 +353,60 @@ describe("buildLayout", () => {
     const b = plan.images.find((image) => image.name === "b")!;
     const blank = plan.images.find((image) => image.name === "blank")!;
     expect(blank.groupKey).toBe(b.groupKey);
+  });
+
+  it.each([
+    ["Generic -> PDF -> AFP -> SOA", ["GENERIC_SCREENSHOT", "PDF_PAPER", "AFP", "SOA_BATCH"]],
+    ["Generic -> PDF -> SOA -> AFP", ["GENERIC_SCREENSHOT", "PDF_PAPER", "SOA_BATCH", "AFP"]],
+    ["SOA -> Generic -> PDF -> AFP", ["SOA_BATCH", "GENERIC_SCREENSHOT", "PDF_PAPER", "AFP"]],
+    ["PDF -> AFP -> Generic", ["PDF_PAPER", "AFP", "GENERIC_SCREENSHOT"]],
+  ] as const)("keeps %s in chronological worksheet order", (_label, moduleIds) => {
+    const images = imagesFor(moduleIds);
+    const plan = buildLayout({
+      selectedModules: [...new Set(moduleIds)],
+      images,
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+
+    expectChronologicalOrder(plan.images, images.map((image) => image.name));
+    const pdf = plan.images.find((placement) => placement.moduleId === "PDF_PAPER");
+    const afp = plan.images.find((placement) => placement.moduleId === "AFP");
+    const adjacent = moduleIds.indexOf("AFP") === moduleIds.indexOf("PDF_PAPER") + 1;
+    if (pdf && afp) {
+      if (adjacent) expect(pdf.top).toBe(afp.top);
+      else expect(afp.top).toBeGreaterThan(pdf.top + pdf.height);
+    }
+  });
+
+  it("keeps multiple Generic and SOA rows chronological with mixed image dimensions", () => {
+    const images: LayoutImage[] = [
+      { name: "generic-left-1", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 300, naturalHeight: 1200, caption: "A", side: "left" },
+      { name: "generic-right-2", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 1200, naturalHeight: 300, caption: "A", side: "right" },
+      { name: "generic-left-3", moduleId: "GENERIC_SCREENSHOT", sequence: 3, naturalWidth: 800, naturalHeight: 600, caption: "", side: "left" },
+      { name: "soa-left-4", moduleId: "SOA_BATCH", sequence: 4, naturalWidth: 1000, naturalHeight: 400, caption: "" },
+      { name: "soa-right-5", moduleId: "SOA_BATCH_PAPERLESS", sequence: 5, naturalWidth: 400, naturalHeight: 1000, caption: "" },
+      { name: "soa-left-6", moduleId: "SOA_BATCH", sequence: 6, naturalWidth: 600, naturalHeight: 600, caption: "" },
+      { name: "soa-right-7", moduleId: "SOA_BATCH_PAPERLESS", sequence: 7, naturalWidth: 900, naturalHeight: 450, caption: "" },
+    ];
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT", "SOA_BATCH", "SOA_BATCH_PAPERLESS"],
+      images,
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+
+    expectChronologicalOrder(plan.images, images.map((image) => image.name));
+    expect(plan.images.find((image) => image.name === "generic-left-1")?.top).toBe(
+      plan.images.find((image) => image.name === "generic-right-2")?.top,
+    );
+    expect(plan.images.find((image) => image.name === "soa-left-4")?.top).toBe(
+      plan.images.find((image) => image.name === "soa-right-5")?.top,
+    );
+    expect(plan.images.find((image) => image.name === "soa-left-6")?.top).toBe(
+      plan.images.find((image) => image.name === "soa-right-7")?.top,
+    );
   });
 });

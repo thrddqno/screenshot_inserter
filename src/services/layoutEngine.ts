@@ -65,104 +65,84 @@ const fitImageToSlotWidth = (
 
 const anchorFor = (anchors: LayoutAnchors, placement: Placement): Rectangle => anchors[placement];
 
-const groupModules = (selectedModules: readonly ModuleId[]): ModuleId[][] => {
-  const selected = new Set<ModuleId>(
-    selectedModules.filter((moduleId) => moduleId !== "GENERIC_SCREENSHOT"),
-  );
-  const visited = new Set<ModuleId>();
-  const sorted = [...selected].sort(
-    (a, b) =>
-      EVIDENCE_MODULES[a].verticalOrder - EVIDENCE_MODULES[b].verticalOrder ||
-      EVIDENCE_MODULES[a].placement.localeCompare(EVIDENCE_MODULES[b].placement),
-  );
-  const groups: ModuleId[][] = [];
-
-  for (const moduleId of sorted) {
-    if (visited.has(moduleId)) continue;
-    const partner = EVIDENCE_MODULES[moduleId].pairingPartner;
-    const group = [moduleId];
-    visited.add(moduleId);
-    if (partner && selected.has(partner) && !visited.has(partner)) {
-      group.push(partner);
-      visited.add(partner);
-    }
-    groups.push([...group].sort((a, b) => EVIDENCE_MODULES[a].placement.localeCompare(EVIDENCE_MODULES[b].placement)));
-  }
-  return groups;
-};
-
 interface EvidenceGroup {
   key: string;
   moduleIds: ModuleId[];
-  images: LayoutImage[];
+  rows: LayoutImage[][];
   genericHeading?: string;
 }
 
-interface GenericRow {
-  left?: LayoutImage;
-  right?: LayoutImage;
+interface SequencedImage {
+  image: LayoutImage;
+  genericHeading?: string;
 }
 
-const buildGenericRows = (images: readonly LayoutImage[]): GenericRow[] => {
-  const rows: GenericRow[] = [];
-  let latestIncompleteRow: GenericRow | undefined;
-  for (const image of [...images].sort((a, b) => a.sequence - b.sequence)) {
-    const side = image.side ?? "left";
-    const oppositeSide: GenericSide = side === "left" ? "right" : "left";
-    if (latestIncompleteRow?.[oppositeSide] && !latestIncompleteRow[side]) {
-      latestIncompleteRow[side] = image;
-      latestIncompleteRow = undefined;
-      continue;
-    }
-    const row: GenericRow = { [side]: image };
-    rows.push(row);
-    latestIncompleteRow = row;
+const canShareChronologicalRow = (first: SequencedImage, second: SequencedImage): boolean => {
+  if (first.image.moduleId === "GENERIC_SCREENSHOT" || second.image.moduleId === "GENERIC_SCREENSHOT") {
+    return (
+      first.image.moduleId === "GENERIC_SCREENSHOT" &&
+      second.image.moduleId === "GENERIC_SCREENSHOT" &&
+      first.genericHeading === second.genericHeading &&
+      (first.image.side ?? "left") === "left" &&
+      (second.image.side ?? "left") === "right"
+    );
   }
-  return rows;
+
+  const firstDefinition = EVIDENCE_MODULES[first.image.moduleId];
+  const secondDefinition = EVIDENCE_MODULES[second.image.moduleId];
+  return (
+    firstDefinition.pairingPartner === second.image.moduleId &&
+    firstDefinition.placement === "left" &&
+    secondDefinition.placement === "right"
+  );
 };
 
 const buildEvidenceGroups = (
   selectedModules: readonly ModuleId[],
   images: readonly LayoutImage[],
 ): EvidenceGroup[] => {
-  const groups: EvidenceGroup[] = groupModules(selectedModules).map((moduleIds) => ({
-    key: moduleIds.join("+"),
-    moduleIds,
-    images: images.filter((image) => moduleIds.includes(image.moduleId)),
-  }));
+  const selected = new Set(selectedModules);
+  let latestGenericHeading = "";
+  const sequenced: SequencedImage[] = [...images]
+    .filter((image) => selected.has(image.moduleId))
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((image) => {
+      if (image.moduleId !== "GENERIC_SCREENSHOT") return { image };
+      if (image.caption !== "") latestGenericHeading = image.caption;
+      return { image, genericHeading: latestGenericHeading };
+    });
 
-  const genericGroups: Array<{ caption: string; images: LayoutImage[] }> = [];
-  const genericByCaption = new Map<string, { caption: string; images: LayoutImage[] }>();
-  let previousGenericGroup: { caption: string; images: LayoutImage[] } | undefined;
-  let unheadedGenericGroup: { caption: string; images: LayoutImage[] } | undefined;
-  for (const image of [...images]
-    .filter((candidate) => candidate.moduleId === "GENERIC_SCREENSHOT")
-    .sort((a, b) => a.sequence - b.sequence)) {
-    if (image.caption === "") {
-      if (!previousGenericGroup) {
-        unheadedGenericGroup ??= { caption: "", images: [] };
-        if (!genericGroups.includes(unheadedGenericGroup)) genericGroups.push(unheadedGenericGroup);
-        previousGenericGroup = unheadedGenericGroup;
-      }
-      previousGenericGroup.images.push(image);
+  const groups: EvidenceGroup[] = [];
+  for (let index = 0; index < sequenced.length; index += 1) {
+    const first = sequenced[index];
+    const second = sequenced[index + 1];
+    const row = second && canShareChronologicalRow(first, second)
+      ? [first.image, second.image]
+      : [first.image];
+    if (row.length === 2) index += 1;
+
+    const isGeneric = first.image.moduleId === "GENERIC_SCREENSHOT";
+    const moduleIds = row.map((image) => image.moduleId);
+    const signature = isGeneric
+      ? `GENERIC_SCREENSHOT:${first.genericHeading}`
+      : moduleIds.join("+");
+    const previous = groups.at(-1);
+    const previousSignature = previous
+      ? previous.moduleIds[0] === "GENERIC_SCREENSHOT"
+        ? `GENERIC_SCREENSHOT:${previous.genericHeading}`
+        : previous.moduleIds.join("+")
+      : undefined;
+
+    if (previous && previousSignature === signature) {
+      previous.rows.push(row);
       continue;
     }
 
-    let targetGroup = genericByCaption.get(image.caption);
-    if (!targetGroup) {
-      targetGroup = { caption: image.caption, images: [] };
-      genericByCaption.set(image.caption, targetGroup);
-      genericGroups.push(targetGroup);
-    }
-    targetGroup.images.push(image);
-    previousGenericGroup = targetGroup;
-  }
-  for (const { caption, images: genericImages } of genericGroups) {
     groups.push({
-      key: `GENERIC_SCREENSHOT:${genericImages[0].sequence}`,
-      moduleIds: ["GENERIC_SCREENSHOT"],
-      images: genericImages,
-      genericHeading: caption,
+      key: `${signature}:${first.image.sequence}`,
+      moduleIds,
+      rows: [row],
+      genericHeading: isGeneric ? first.genericHeading : undefined,
     });
   }
   return groups;
@@ -188,20 +168,8 @@ export const buildLayout = ({
   let cursorTop = baseTop;
 
   for (const group of buildEvidenceGroups(selectedModules, images)) {
-    const byModule = new Map(
-      group.moduleIds.map((moduleId) => [
-        moduleId,
-        [...group.images]
-          .filter((image) => image.moduleId === moduleId)
-          .sort((a, b) => a.sequence - b.sequence),
-      ]),
-    );
-    const rowCount = Math.max(0, ...group.moduleIds.map((moduleId) => byModule.get(moduleId)?.length ?? 0));
-    if (rowCount === 0) continue;
-
     const headingTop = cursorTop;
-    const visibleHeadingModules = group.moduleIds.filter((moduleId) => {
-      if ((byModule.get(moduleId)?.length ?? 0) === 0) return false;
+    const visibleHeadingModules = [...new Set(group.moduleIds)].filter((moduleId) => {
       if (moduleId === "GENERIC_SCREENSHOT") return group.genericHeading !== "";
       return EVIDENCE_MODULES[moduleId].showHeading;
     });
@@ -222,41 +190,13 @@ export const buildLayout = ({
     const hasHeading = visibleHeadingModules.length > 0;
     let rowTop = headingTop + (hasHeading ? LAYOUT_CONFIG.headingHeight + LAYOUT_CONFIG.headingGap : 0);
 
-    if (group.moduleIds.length === 1 && group.moduleIds[0] === "GENERIC_SCREENSHOT") {
-      for (const row of buildGenericRows(group.images)) {
-        let rowHeight = 0;
-        for (const side of ["left", "right"] as const) {
-          const image = row[side];
-          if (!image) continue;
-          const anchor = anchors[side];
-          const size = fitImageToSlotWidth(image.naturalWidth, image.naturalHeight, anchor.width);
-          placements.push({
-            name: image.name,
-            moduleId: image.moduleId,
-            sequence: image.sequence,
-            groupKey: group.key,
-            left: anchor.left,
-            top: rowTop,
-            ...size,
-          });
-          rowHeight = Math.max(rowHeight, size.height);
-        }
-        rowTop += rowHeight + LAYOUT_CONFIG.itemGap;
-      }
-      cursorTop = Math.max(
-        rowTop,
-        headingTop + (hasHeading ? LAYOUT_CONFIG.headingHeight : 0),
-      ) + LAYOUT_CONFIG.groupGap;
-      continue;
-    }
-
-    for (let index = 0; index < rowCount; index += 1) {
+    for (const row of group.rows) {
       let rowHeight = 0;
-      for (const moduleId of group.moduleIds) {
-        const image = byModule.get(moduleId)?.[index];
-        if (!image) continue;
-        const definition = EVIDENCE_MODULES[moduleId];
-        const anchor = anchorFor(anchors, definition.placement);
+      for (const image of row) {
+        const slot = image.moduleId === "GENERIC_SCREENSHOT"
+          ? image.side ?? "left"
+          : EVIDENCE_MODULES[image.moduleId].placement;
+        const anchor = anchorFor(anchors, slot);
         const size = fitImageToSlotWidth(
           image.naturalWidth,
           image.naturalHeight,
@@ -264,7 +204,7 @@ export const buildLayout = ({
         );
         const placement: ImagePlacement = {
           name: image.name,
-          moduleId,
+          moduleId: image.moduleId,
           sequence: image.sequence,
           groupKey: group.key,
           left: anchor.left,
