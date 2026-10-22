@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { EVIDENCE_MODULES } from "./config/evidenceModules";
 import { IMAGE_LIMITS } from "./config/layoutProfiles";
 import { AVAILABLE_TEST_TYPES, TEST_TYPE_PROFILES } from "./config/testTypeProfiles";
@@ -44,6 +44,24 @@ const HEADER_PERSIST_DELAY_MS = 400;
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Unexpected error occurred.";
+
+type AppIconName = "scenario" | "status" | "image" | "paste" | "plus" | "trash" | "eraser" | "success" | "error" | "info";
+
+const AppIcon = ({ name, className = "" }: { name: AppIconName; className?: string }) => {
+  const paths: Record<AppIconName, ReactNode> = {
+    scenario: <><path d="M7 3h7l4 4v14H7z" /><path d="M14 3v5h5M10 12h5M10 16h5" /></>,
+    status: <><path d="M5 20v-7h4v7zM10 20V8h4v12zM15 20V4h4v16z" /></>,
+    image: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m5 18 5-5 3 3 3-3 3 3" /></>,
+    paste: <><path d="M9 5h6M10 3h4a2 2 0 0 1 2 2v2H8V5a2 2 0 0 1 2-2Z" /><path d="M7 6H5v15h14V6h-2" /></>,
+    plus: <path d="M12 5v14M5 12h14" />,
+    trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6" /></>,
+    eraser: <><path d="m4 15 8-9 7 7-7 8H7z" /><path d="m10 18 5-6M12 21h8" /></>,
+    success: <><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></>,
+    error: <><circle cx="12" cy="12" r="9" /><path d="m9 9 6 6M15 9l-6 6" /></>,
+    info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></>,
+  };
+  return <svg className={`app-icon ${className}`} viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
+};
 
 export default function App() {
   const [scenario, setScenario] = useState<ScenarioContext | null>(null);
@@ -481,6 +499,8 @@ export default function App() {
   };
 
   const busy = !preferencesLoaded || refreshing || operationBusy || pasteBusy;
+  const statusClass = status === "PASS" ? "status-pass" : status === "FAIL" ? "status-fail" : "status-pending";
+  const messageIcon: AppIconName = message?.kind === "success" ? "success" : message?.kind === "error" ? "error" : "info";
 
   return (
     <main className="app-shell">
@@ -547,7 +567,7 @@ export default function App() {
       ) : null}
 
       <section className="panel scenario-panel" aria-labelledby="scenario-heading">
-        <h2 id="scenario-heading">Test Scenario</h2>
+        <h2 id="scenario-heading"><AppIcon name="scenario" />Test Scenario</h2>
         <dl className="scenario-id">
           <dt>Scenario ID</dt>
           <dd>{scenario?.scenarioId || "Not loaded"}</dd>
@@ -563,10 +583,10 @@ export default function App() {
       </section>
 
       <section className="panel status-panel" aria-labelledby="status-heading">
-        <h2 id="status-heading">Worksheet Status</h2>
+        <h2 id="status-heading"><AppIcon name="status" />Worksheet Status</h2>
         <label className="field status-field">
           <span>Status</span>
-          <select
+          <select className={statusClass}
             disabled={busy || !scenario?.statusCellAddress}
             value={status}
             onChange={(event) => void handleStatusChange(event.target.value as Exclude<EvidenceStatus, "UNCHANGED">)}
@@ -579,7 +599,7 @@ export default function App() {
       </section>
 
       <section className="panel capture-panel" aria-labelledby="capture-heading">
-        <h2 id="capture-heading">Screenshot to Insert</h2>
+        <h2 id="capture-heading"><AppIcon name="image" />Screenshot to Insert</h2>
         <label className="field">
           <span>Evidence Type</span>
           <select
@@ -653,6 +673,7 @@ export default function App() {
             </>
           ) : (
             <>
+              <AppIcon name="image" className="paste-placeholder-icon" />
               <strong>Press Ctrl+V</strong>
               <span>Paste a PNG or JPEG screenshot, maximum {IMAGE_LIMITS.maximumBytes / 1024 / 1024} MB.</span>
             </>
@@ -665,6 +686,7 @@ export default function App() {
             disabled={busy}
             onClick={() => void handleUsePastedPicture()}
           >
+            <AppIcon name="paste" />
             {pictureSelectionArmed ? "Cancel picture selection" : "Use pasted Excel picture"}
           </button>
         </div>
@@ -680,17 +702,21 @@ export default function App() {
           disabled={busy || !scenario || !pendingImage}
           onClick={() => void handleInsert()}
         >
+          <AppIcon name="plus" />
           Insert
         </button>
         <button className="button button-danger" type="button" disabled={busy || !scenario} onClick={() => void handleRemove()}>
+          <AppIcon name="trash" />
           Remove Last Inserted
         </button>
         <button className="button button-secondary" type="button" disabled={busy || !pendingImage} onClick={clearPending}>
+          <AppIcon name="eraser" />
           Clear Pending
         </button>
       </div>
 
       <div className={`message message-${message?.kind ?? "info"}`} role={message?.kind === "error" ? "alert" : "status"}>
+        <AppIcon name={messageIcon} />
         {message?.text || "Ready."}
       </div>
       {preferenceWarning ? <div className="message message-warning" role="status">{preferenceWarning}</div> : null}
