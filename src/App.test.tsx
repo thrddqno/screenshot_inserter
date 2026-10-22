@@ -15,6 +15,10 @@ const preferences = (testTypeId: TestTypeId) => ({
 describe("task pane", () => {
   beforeEach(() => {
     vi.spyOn(updateService, "checkForAppUpdate").mockResolvedValue(null);
+    vi.spyOn(excelService, "subscribeWorkbookPictureActivated").mockResolvedValue({
+      refresh: vi.fn(async () => undefined),
+      unsubscribe: vi.fn(async () => undefined),
+    });
   });
 
   afterEach(() => {
@@ -36,7 +40,7 @@ describe("task pane", () => {
     expect(screen.getByRole("heading", { name: "Screenshot to Insert" })).toBeVisible();
     expect(screen.getByText("Not loaded")).toBeVisible();
     expect(screen.getByText("Press Ctrl+V")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Paste copied picture" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Use pasted Excel picture" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Insert" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove Last Inserted" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear Pending" })).toBeDisabled();
@@ -296,6 +300,20 @@ describe("task pane", () => {
 
   it("pastes a picture copied from another workbook", async () => {
     vi.stubGlobal("URL", { ...URL, revokeObjectURL: vi.fn() });
+    const pastedPicture = {
+      worksheetId: "destination-sheet",
+      shapeId: "picture-7",
+      name: "Picture 7",
+    };
+    let pictureHandler: excelService.WorkbookPictureActivatedHandler | undefined;
+    const refreshPictures = vi.fn(async () => undefined);
+    vi.mocked(excelService.subscribeWorkbookPictureActivated).mockImplementation(async (handler) => {
+      pictureHandler = handler;
+      return {
+        refresh: refreshPictures,
+        unsubscribe: vi.fn(async () => undefined),
+      };
+    });
     vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
     vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
       preferences: preferences("GENERAL"),
@@ -311,7 +329,7 @@ describe("task pane", () => {
         expectedResult: "Result",
       },
     });
-    vi.spyOn(imageValidation, "getImageFromSystemClipboard").mockResolvedValue({
+    vi.spyOn(excelService, "getWorkbookPicturePreview").mockResolvedValue({
       base64: "iVBORw0KGgo=",
       mimeType: "image/png",
       size: 200,
@@ -325,12 +343,18 @@ describe("task pane", () => {
 
     render(<App />);
     await screen.findByText("TS7.1");
-    fireEvent.click(screen.getByRole("button", { name: "Paste copied picture" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use pasted Excel picture" }));
+    expect(await screen.findByText("Click the picture you pasted onto the destination worksheet.")).toBeVisible();
+    expect(refreshPictures).toHaveBeenCalled();
 
+    await act(async () => {
+      await pictureHandler?.(pastedPicture);
+    });
     expect(await screen.findByAltText("Pending screenshot preview")).toBeVisible();
+    expect(screen.getByText("Worksheet picture: Picture 7")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Insert" }));
     await screen.findByText("Inserted EV__TS7_1__GENERIC_SCREENSHOT__001.");
-    expect(insert.mock.calls[0][0]).not.toHaveProperty("sourceShape");
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ sourceShape: pastedPicture }));
   });
 
   it("serializes rapid Test Type saves so latest choice wins", async () => {

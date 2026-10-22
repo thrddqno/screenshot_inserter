@@ -83,13 +83,14 @@ Some Microsoft 365 builds also expose **Upload My Add-in** directly.
 3. Choose Test Type: `General` provides only Generic Screenshot; `SOA` provides all SOA evidence types.
 4. Choose Evidence Type.
 5. For Generic Screenshot, choose **Left (A:D)** or **Right (F:I)** and optionally enter dynamic Header. Right images start at column F and match the `A:D` width.
-6. To copy a picture from another workbook, select the picture itself in the source workbook and press `Ctrl+C`. In the destination workbook, focus the task pane and press `Ctrl+V`, or select **Paste copied picture**.
-7. Select **Insert**. The source picture stays in place. Screenshot insertion never changes worksheet Status.
-8. In separate **Worksheet Status** panel, choose `PASS/FAIL`, `PASS`, or `FAIL`. Changing dropdown immediately updates workbook; no button required.
+6. To copy a picture from another workbook, select it in workbook A and press `Ctrl+C`. In workbook B, paste the Excel object onto the destination scenario sheet.
+7. Select **Use pasted Excel picture**, then click the picture you just pasted. The task pane previews the picture.
+8. Select **Insert**. After successful insertion, the temporary pasted object is replaced by the managed evidence image. The original in workbook A stays in place. Screenshot insertion never changes worksheet Status.
+9. In separate **Worksheet Status** panel, choose `PASS/FAIL`, `PASS`, or `FAIL`. Changing dropdown immediately updates workbook; no button required.
 
 Changing selected row while already on `Summary` does not activate another worksheet. Use refresh icon after changing Summary row.
 
-Images are appended below all existing non-add-in shapes. Existing `Picture N` objects are not moved, renamed, or deleted.
+Images are appended below all existing non-add-in shapes. Existing `Picture N` objects are not changed unless the tester explicitly selects a temporary pasted object through **Use pasted Excel picture**; that temporary object is removed only after its managed evidence copy is inserted.
 
 Test Type, Status, and each profile's last Evidence Type, Generic Side, and Header are stored in Excel workbook settings. A workbook without saved choices defaults to `General` and `PASS/FAIL` Status. Changing Test Type restores that profile's choices while keeping pending screenshot and Status. Scenario refresh preserves Evidence Type, Side, and Header; recognized worksheet Status takes precedence. General and SOA evidence are isolated: one profile does not reflow or remove another profile's images.
 
@@ -181,7 +182,7 @@ npm run build
 - Non-generic evidence accepts no caption/header input
 - Status constrained to static allowlist
 - Screenshot Base64 held only in memory
-- Copied workbook picture previews are held only in memory
+- Pasted workbook picture previews are held only in memory
 - No screenshot upload, backend, local storage, or credentials
 - Existing shapes excluded from deletion unless name exactly matches managed pattern
 - Heading writes stop when target cell contains user-owned content
@@ -220,6 +221,6 @@ Company rollout should use approved internal HTTPS hosting or private GitHub Ent
 
 - Only first milestone layouts are validated in configuration.
 - Real Excel host acceptance must run on Windows Excel and Excel for web.
-- Cross-workbook picture transfer depends on Excel exposing the copied picture to the task-pane webview as PNG or JPEG. If **Paste copied picture** is unavailable or denied, focus the task pane and press `Ctrl+V`.
+- Excel copies worksheet pictures as Office drawing objects that task-pane clipboard APIs cannot read directly. Cross-workbook transfer therefore requires a temporary native Excel paste onto the destination worksheet before selecting **Use pasted Excel picture**.
 - Removed evidence leaves managed heading cells in place; no unrelated content is touched.
 - Evidence count is not updated because reference workbook defines no configured count cell.

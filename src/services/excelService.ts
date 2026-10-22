@@ -9,7 +9,9 @@ import type {
   ScenarioContext,
   ScenarioReadResult,
   TestTypeId,
+  WorkbookPictureReference,
 } from "../types/evidence";
+import { createPendingImage } from "./imageValidation";
 import { discoverScenario, findSummaryScenarioColumn, isSummaryWorksheet } from "./workbookDiscovery";
 import { buildLayout, type LayoutAnchors, type LayoutImage, type Rectangle } from "./layoutEngine";
 import {
@@ -150,6 +152,115 @@ export const subscribeWorksheetActivated = async (
   };
 };
 
+export type WorkbookPictureActivatedHandler = (
+  picture: WorkbookPictureReference,
+) => void | Promise<void>;
+
+export interface WorkbookPictureSubscription {
+  refresh: () => Promise<void>;
+  unsubscribe: () => Promise<void>;
+}
+
+const pictureKey = (worksheetId: string, shapeId: string): string =>
+  `${worksheetId}\u0000${shapeId}`;
+
+export const subscribeWorkbookPictureActivated = async (
+  handler: WorkbookPictureActivatedHandler,
+): Promise<WorkbookPictureSubscription> => {
+  if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
+
+  const registered = new Set<string>();
+  const pictures = new Map<string, WorkbookPictureReference>();
+  let disposed = false;
+
+  const onActivated = async (event: Excel.ShapeActivatedEventArgs): Promise<void> => {
+    if (disposed) return;
+    const picture = pictures.get(pictureKey(event.worksheetId, event.shapeId));
+    if (picture) await handler(picture);
+  };
+
+  const refresh = async (): Promise<void> => {
+    if (disposed || !isOfficeHostAvailable()) return;
+    await Excel.run(async (context) => {
+      const worksheets = context.workbook.worksheets;
+      worksheets.load("items/id");
+      await context.sync();
+      for (const worksheet of worksheets.items) {
+        worksheet.shapes.load("items/id,items/name,items/type");
+      }
+      await context.sync();
+      for (const worksheet of worksheets.items) {
+        for (const shape of worksheet.shapes.items) {
+          if (shape.type !== "Image" || isManagedShapeName(shape.name)) continue;
+          const key = pictureKey(worksheet.id, shape.id);
+          pictures.set(key, {
+            worksheetId: worksheet.id,
+            shapeId: shape.id,
+            name: shape.name,
+          });
+          if (registered.has(key)) continue;
+          shape.onActivated.add(onActivated);
+          registered.add(key);
+        }
+      }
+      await context.sync();
+    });
+  };
+
+  const unsubscribe = async (): Promise<void> => {
+    if (disposed) return;
+    disposed = true;
+    if (!isOfficeHostAvailable()) return;
+    await Excel.run(async (context) => {
+      const worksheets = context.workbook.worksheets;
+      worksheets.load("items/id");
+      await context.sync();
+      for (const worksheet of worksheets.items) worksheet.shapes.load("items/id");
+      await context.sync();
+      for (const worksheet of worksheets.items) {
+        for (const shape of worksheet.shapes.items) {
+          if (registered.has(pictureKey(worksheet.id, shape.id))) {
+            shape.onActivated.remove(onActivated);
+          }
+        }
+      }
+      await context.sync();
+    });
+  };
+
+  await refresh();
+  return { refresh, unsubscribe };
+};
+
+const base64ToPngBlob = (encoded: string): Blob => {
+  const marker = "base64,";
+  const base64 = encoded.includes(marker) ? encoded.slice(encoded.indexOf(marker) + marker.length) : encoded;
+  const binary = atob(base64);
+  return new Blob([Uint8Array.from(binary, (character) => character.charCodeAt(0))], { type: "image/png" });
+};
+
+export const getWorkbookPicturePreview = async (
+  picture: WorkbookPictureReference,
+): Promise<PendingImage> => {
+  if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
+  try {
+    const encoded = await Excel.run(async (context) => {
+      const shape = context.workbook.worksheets
+        .getItem(picture.worksheetId)
+        .shapes.getItem(picture.shapeId);
+      shape.load("type");
+      const result = shape.getAsImage("PNG");
+      await context.sync();
+      if (shape.type !== "Image") throw new ExcelServiceError("Selected Excel shape is not a picture.");
+      return result.value;
+    });
+    if (!encoded) throw new ExcelServiceError("Excel could not render the selected picture.");
+    return await createPendingImage(base64ToPngBlob(encoded));
+  } catch (error) {
+    throw new ExcelServiceError(`Could not read selected Excel picture: ${toMessage(error)}`);
+  }
+};
+
 export const readCurrentScenario = async (): Promise<ScenarioReadResult> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Open this page inside an Excel task pane.");
 
@@ -227,6 +338,7 @@ interface InsertEvidenceInput {
   image: PendingImage;
   caption: string;
   side?: GenericSide;
+  sourceShape?: WorkbookPictureReference;
 }
 
 const setShapeRectangle = (shape: Excel.Shape, rectangle: Rectangle): void => {
@@ -276,6 +388,7 @@ export const insertEvidence = async ({
   image,
   caption,
   side,
+  sourceShape,
 }: InsertEvidenceInput): Promise<string> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
   if (!isTestTypeId(testTypeId) || !TEST_TYPE_PROFILES[testTypeId].moduleIds.includes(moduleId)) {
@@ -300,13 +413,23 @@ export const insertEvidence = async ({
       const rightRange = sheet.getRange(LAYOUT_CONFIG.rightAnchorRange);
       const fullRange = sheet.getRange(LAYOUT_CONFIG.fullAnchorRange);
       const usedRange = sheet.getUsedRangeOrNullObject(true);
+      const sourcePicture = sourceShape
+        ? context.workbook.worksheets
+            .getItem(sourceShape.worksheetId)
+            .shapes.getItem(sourceShape.shapeId)
+        : undefined;
 
-      shapes.load("items/name,items/left,items/top,items/width,items/height,items/altTextDescription");
+      shapes.load("items/id,items/name,items/left,items/top,items/width,items/height,items/altTextDescription");
       leftRange.load("left,width");
       rightRange.load("left,width");
       fullRange.load("left,width");
       usedRange.load("top,height");
+      sourcePicture?.load("type,width,height");
       await context.sync();
+
+      if (sourcePicture && sourcePicture.type !== "Image") {
+        throw new ExcelServiceError("Selected Excel shape is not a picture.");
+      }
 
       const targetScenarioKey = scenarioKey(scenario.scenarioId);
       const existingNames = shapes.items.map((shape) => shape.name);
@@ -345,8 +468,8 @@ export const insertEvidence = async ({
         name: createdImageName,
         moduleId,
         sequence,
-        naturalWidth: image.width * 0.75,
-        naturalHeight: image.height * 0.75,
+        naturalWidth: sourcePicture?.width ?? image.width * 0.75,
+        naturalHeight: sourcePicture?.height ?? image.height * 0.75,
         caption: effectiveCaption,
         side: effectiveSide,
       });
@@ -361,6 +484,7 @@ export const insertEvidence = async ({
       const activeModules = [...modulesWithImages];
       const obstacles = shapes.items
         .filter((shape) => {
+          if (sourceShape && shape.id === sourceShape.shapeId) return false;
           const parsed = parseImageShapeName(shape.name);
           if (parsed?.scenarioKey === targetScenarioKey) {
             return parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId).testTypeId !== testTypeId;
@@ -430,7 +554,7 @@ export const insertEvidence = async ({
         if (range.values[0]?.[0] === heading.text) range.clear("All");
       }
 
-      const newImage = shapes.addImage(image.base64);
+      const newImage = sourcePicture ? sourcePicture.copyTo(sheet) : shapes.addImage(image.base64);
       newImage.name = createdImageName;
       newImage.altTextTitle = EVIDENCE_MODULES[moduleId].displayName;
       shapeByName.set(createdImageName, newImage);
@@ -474,6 +598,14 @@ export const insertEvidence = async ({
       }
 
       await context.sync();
+      if (sourcePicture) {
+        try {
+          sourcePicture.delete();
+          await context.sync();
+        } catch {
+          // The managed copy is already inserted; preserve it if temporary-shape cleanup fails.
+        }
+      }
       return createdImageName;
     });
   } catch (error) {

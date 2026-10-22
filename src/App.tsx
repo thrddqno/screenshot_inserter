@@ -3,18 +3,17 @@ import { EVIDENCE_MODULES } from "./config/evidenceModules";
 import { IMAGE_LIMITS } from "./config/layoutProfiles";
 import { AVAILABLE_TEST_TYPES, TEST_TYPE_PROFILES } from "./config/testTypeProfiles";
 import {
+  getWorkbookPicturePreview,
   insertEvidence,
   isOfficeHostAvailable,
   readCurrentScenario,
   removeLastInsertedEvidence,
+  subscribeWorkbookPictureActivated,
+  type WorkbookPictureSubscription,
   subscribeWorksheetActivated,
   updateScenarioStatus,
 } from "./services/excelService";
-import {
-  getImageFromClipboard,
-  getImageFromSystemClipboard,
-  ImageValidationError,
-} from "./services/imageValidation";
+import { getImageFromClipboard, ImageValidationError } from "./services/imageValidation";
 import {
   DEFAULT_WORKBOOK_PREFERENCES,
   readWorkbookPreferences,
@@ -33,6 +32,7 @@ import type {
   PendingImage,
   ScenarioContext,
   TestTypeId,
+  WorkbookPictureReference,
 } from "./types/evidence";
 
 type Message = { kind: "success" | "error" | "info"; text: string } | null;
@@ -48,6 +48,8 @@ export default function App() {
   const [caption, setCaption] = useState("");
   const [genericSide, setGenericSide] = useState<GenericSide>("left");
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+  const [pendingWorkbookPicture, setPendingWorkbookPicture] = useState<WorkbookPictureReference | null>(null);
+  const [pictureSelectionArmed, setPictureSelectionArmed] = useState(false);
   const [status, setStatus] = useState<EvidenceStatus>("PASS/FAIL");
   const [refreshing, setRefreshing] = useState(false);
   const [operationBusy, setOperationBusy] = useState(false);
@@ -64,6 +66,8 @@ export default function App() {
   const preferenceWriteRunningRef = useRef(false);
   const preferenceWriteTimerRef = useRef<number | undefined>(undefined);
   const updateCheckRunningRef = useRef(false);
+  const pictureSelectionArmedRef = useRef(false);
+  const pictureSubscriptionRef = useRef<WorkbookPictureSubscription | null>(null);
 
   const selectedProfile = TEST_TYPE_PROFILES[testTypeId];
   const availableModules = selectedProfile.moduleIds
@@ -177,6 +181,7 @@ export default function App() {
     mountedRef.current = true;
     let disposed = false;
     let unsubscribe: (() => Promise<void>) | undefined;
+    let pictureSubscription: WorkbookPictureSubscription | undefined;
 
     if (!isOfficeHostAvailable()) {
       setPreferencesLoaded(true);
@@ -205,6 +210,40 @@ export default function App() {
         setPreferencesLoaded(true);
 
         try {
+          pictureSubscription = await subscribeWorkbookPictureActivated(async (picture) => {
+            if (disposed || !pictureSelectionArmedRef.current) return;
+            pictureSelectionArmedRef.current = false;
+            setPictureSelectionArmed(false);
+            setOperationBusy(true);
+            setMessage({ kind: "info", text: `Reading pasted Excel picture ${picture.name}…` });
+            try {
+              const image = await getWorkbookPicturePreview(picture);
+              if (disposed) {
+                URL.revokeObjectURL(image.previewUrl);
+                return;
+              }
+              setPendingImage((current) => {
+                if (current) URL.revokeObjectURL(current.previewUrl);
+                return image;
+              });
+              setPendingWorkbookPicture(picture);
+              setMessage({ kind: "success", text: `Pasted Excel picture ready: ${picture.name}.` });
+            } catch (error) {
+              if (!disposed) setMessage({ kind: "error", text: errorMessage(error) });
+            } finally {
+              if (!disposed) setOperationBusy(false);
+            }
+          });
+          if (disposed) {
+            void pictureSubscription.unsubscribe().catch(() => undefined);
+            return;
+          }
+          pictureSubscriptionRef.current = pictureSubscription;
+        } catch {
+          // Clipboard screenshots remain available if shape activation events are unsupported.
+        }
+
+        try {
           const removeHandler = await subscribeWorksheetActivated(async () => {
             if (!disposed) await refreshScenario(true);
           });
@@ -225,10 +264,13 @@ export default function App() {
     return () => {
       disposed = true;
       mountedRef.current = false;
+      pictureSelectionArmedRef.current = false;
+      pictureSubscriptionRef.current = null;
       if (preferenceWriteTimerRef.current !== undefined) {
         window.clearTimeout(preferenceWriteTimerRef.current);
       }
       if (unsubscribe) void unsubscribe().catch(() => undefined);
+      if (pictureSubscription) void pictureSubscription.unsubscribe().catch(() => undefined);
     };
   }, [refreshScenario]);
 
@@ -261,6 +303,8 @@ export default function App() {
     readImage: () => Promise<PendingImage>,
     progressMessage: string,
   ) => {
+    pictureSelectionArmedRef.current = false;
+    setPictureSelectionArmed(false);
     setOperationBusy(true);
     setMessage({ kind: "info", text: progressMessage });
     try {
@@ -269,6 +313,7 @@ export default function App() {
         if (current) URL.revokeObjectURL(current.previewUrl);
         return image;
       });
+      setPendingWorkbookPicture(null);
       setMessage({
         kind: "success",
         text: `Screenshot ready: ${image.width}×${image.height}, ${(image.size / 1024).toFixed(1)} KB.`,
@@ -284,10 +329,6 @@ export default function App() {
   const acceptClipboard = useCallback(async (clipboardData: DataTransfer | null) => {
     await acceptImage(() => getImageFromClipboard(clipboardData), "Reading pasted picture…");
   }, [acceptImage]);
-
-  const handlePasteCopiedPicture = async () => {
-    await acceptImage(getImageFromSystemClipboard, "Reading copied Excel picture…");
-  };
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -310,11 +351,37 @@ export default function App() {
   );
 
   const clearPending = () => {
+    pictureSelectionArmedRef.current = false;
+    setPictureSelectionArmed(false);
     setPendingImage((current) => {
       if (current) URL.revokeObjectURL(current.previewUrl);
       return null;
     });
+    setPendingWorkbookPicture(null);
     setMessage({ kind: "info", text: "Pending screenshot cleared." });
+  };
+
+  const handleUsePastedPicture = async () => {
+    if (pictureSelectionArmedRef.current) {
+      pictureSelectionArmedRef.current = false;
+      setPictureSelectionArmed(false);
+      setMessage({ kind: "info", text: "Pasted picture selection cancelled." });
+      return;
+    }
+    setOperationBusy(true);
+    setMessage({ kind: "info", text: "Finding pasted Excel pictures…" });
+    try {
+      const subscription = pictureSubscriptionRef.current;
+      if (!subscription) throw new Error("Worksheet picture selection is unavailable in this Excel version.");
+      await subscription.refresh();
+      pictureSelectionArmedRef.current = true;
+      setPictureSelectionArmed(true);
+      setMessage({ kind: "info", text: "Click the picture you pasted onto the destination worksheet." });
+    } catch (error) {
+      setMessage({ kind: "error", text: errorMessage(error) });
+    } finally {
+      setOperationBusy(false);
+    }
   };
 
   const handleInsert = async () => {
@@ -329,9 +396,11 @@ export default function App() {
         image: pendingImage,
         caption: evidenceType === "GENERIC_SCREENSHOT" ? caption : "",
         side: evidenceType === "GENERIC_SCREENSHOT" ? genericSide : undefined,
+        sourceShape: pendingWorkbookPicture ?? undefined,
       });
       URL.revokeObjectURL(pendingImage.previewUrl);
       setPendingImage(null);
+      setPendingWorkbookPicture(null);
       setMessage({ kind: "success", text: `Inserted ${name}.` });
     } catch (error) {
       setMessage({ kind: "error", text: errorMessage(error) });
@@ -543,11 +612,12 @@ export default function App() {
             <>
               <img src={pendingImage.previewUrl} alt="Pending screenshot preview" />
               <p>{pendingImage.mimeType.replace("image/", "").toUpperCase()} · {(pendingImage.size / 1024).toFixed(1)} KB</p>
+              {pendingWorkbookPicture ? <p>Worksheet picture: {pendingWorkbookPicture.name}</p> : null}
             </>
           ) : (
             <>
               <strong>Press Ctrl+V</strong>
-              <span>Copy a picture in another workbook, then paste it here. PNG or JPEG, maximum {IMAGE_LIMITS.maximumBytes / 1024 / 1024} MB.</span>
+              <span>Paste a PNG or JPEG screenshot, maximum {IMAGE_LIMITS.maximumBytes / 1024 / 1024} MB.</span>
             </>
           )}
         </div>
@@ -556,11 +626,14 @@ export default function App() {
             className="button button-primary"
             type="button"
             disabled={busy}
-            onClick={() => void handlePasteCopiedPicture()}
+            onClick={() => void handleUsePastedPicture()}
           >
-            Paste copied picture
+            {pictureSelectionArmed ? "Cancel picture selection" : "Use pasted Excel picture"}
           </button>
         </div>
+        <p className="selection-help">
+          Copy in workbook A, paste onto this scenario sheet in workbook B, then select the pasted picture here.
+        </p>
       </section>
 
       <div className="actions">
