@@ -155,6 +155,26 @@ const buildEvidenceGroups = (
       genericHeading: isGeneric ? first.genericHeading : undefined,
     });
   }
+
+  for (const group of groups) {
+    if (group.moduleIds[0] === "GENERIC_SCREENSHOT") continue;
+    const imagesByModule = new Map(
+      group.moduleIds.map((moduleId) => [
+        moduleId,
+        group.rows
+          .flat()
+          .filter((image) => image.moduleId === moduleId)
+          .sort((first, second) => first.sequence - second.sequence),
+      ]),
+    );
+    group.moduleIds.sort((first, second) =>
+      EVIDENCE_MODULES[first].placement.localeCompare(EVIDENCE_MODULES[second].placement),
+    );
+    const rowCount = Math.max(...group.moduleIds.map((moduleId) => imagesByModule.get(moduleId)?.length ?? 0));
+    group.rows = Array.from({ length: rowCount }, (_, index) =>
+      group.moduleIds.flatMap((moduleId) => imagesByModule.get(moduleId)?.[index] ?? []),
+    );
+  }
   return groups;
 };
 

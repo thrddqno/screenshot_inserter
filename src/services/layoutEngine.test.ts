@@ -79,12 +79,16 @@ describe("buildLayout", () => {
 
     expect(plan.headings.filter((heading) => heading.moduleId === leftModule)).toHaveLength(1);
     expect(plan.headings.filter((heading) => heading.moduleId === rightModule)).toHaveLength(1);
-    expectChronologicalOrder(plan.images, images.map((image) => image.name));
     const left1 = plan.images.find((image) => image.name === "left-1")!;
     const left2 = plan.images.find((image) => image.name === "left-2")!;
     const right3 = plan.images.find((image) => image.name === "right-3")!;
+    for (let first = 0; first < plan.images.length; first += 1) {
+      for (let second = first + 1; second < plan.images.length; second += 1) {
+        expect(rectanglesIntersect(plan.images[first], plan.images[second])).toBe(false);
+      }
+    }
     expect(left2.top).toBeGreaterThan(left1.top + left1.height);
-    expect(left2.top).toBe(right3.top);
+    expect(left1.top).toBe(right3.top);
   });
 
   it("starts later Paperless group below taller prior pair", () => {

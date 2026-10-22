@@ -440,8 +440,8 @@ describe("Excel evidence service", () => {
 
     expect(activeHeadingTexts.filter((text) => text === "PDF")).toHaveLength(1);
     expect(activeHeadingTexts.filter((text) => text === "AFP")).toHaveLength(1);
-    expect(pdf2.top).toBeGreaterThan(pdf1.top + pdf1.height);
-    expect(pdf2.top).toBe(afp.top);
+    expect(pdf1.top).toBe(afp.top);
+    expect(pdf2.top).toBeGreaterThan(Math.max(pdf1.top + pdf1.height, afp.top + afp.height));
   });
 
   it("preserves chronological geometry across separate mixed-evidence insertions", async () => {
