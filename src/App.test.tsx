@@ -37,6 +37,8 @@ describe("task pane", () => {
     expect(testType).toHaveValue("GENERAL");
     expect(testType.querySelectorAll("option")).toHaveLength(2);
     expect(screen.getByRole("heading", { name: "Test Scenario" })).toBeVisible();
+    expect(screen.getByText("Condition").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Expected Result").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByRole("heading", { name: "Screenshot to Insert" })).toBeVisible();
     expect(screen.getByText("Not loaded")).toBeVisible();
     expect(screen.getByText("Press Ctrl+V")).toBeVisible();

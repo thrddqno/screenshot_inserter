@@ -552,7 +552,7 @@ export default function App() {
           <dt>Scenario ID</dt>
           <dd>{scenario?.scenarioId || "Not loaded"}</dd>
         </dl>
-        <details open>
+        <details>
           <summary>Condition</summary>
           <p className="workbook-preview">{scenario?.condition || "—"}</p>
         </details>
@@ -562,7 +562,7 @@ export default function App() {
         </details>
       </section>
 
-      <section className="panel" aria-labelledby="status-heading">
+      <section className="panel status-panel" aria-labelledby="status-heading">
         <h2 id="status-heading">Worksheet Status</h2>
         <label className="field status-field">
           <span>Status</span>
@@ -578,7 +578,7 @@ export default function App() {
         </label>
       </section>
 
-      <section className="panel" aria-labelledby="capture-heading">
+      <section className="panel capture-panel" aria-labelledby="capture-heading">
         <h2 id="capture-heading">Screenshot to Insert</h2>
         <label className="field">
           <span>Evidence Type</span>
