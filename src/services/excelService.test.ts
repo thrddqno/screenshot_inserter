@@ -263,7 +263,7 @@ describe("Excel evidence service", () => {
     const inserted = host.items.find((shape) => shape.name === name)!;
     expect(inserted).toMatchObject({ left: 0, width: 400, height: 500, lockAspectRatio: true });
     expect(JSON.parse(inserted.altTextDescription ?? "{}")).toMatchObject({
-      version: 3,
+      version: 4,
       testTypeId: "SOA",
       side: "left",
     });
@@ -463,7 +463,7 @@ describe("Excel evidence service", () => {
     });
 
     expect(JSON.parse(legacyManaged.altTextDescription ?? "{}")).toMatchObject({
-      version: 3,
+      version: 4,
       testTypeId: "SOA",
       caption: "Legacy Header",
       side: "left",
@@ -492,7 +492,7 @@ describe("Excel evidence service", () => {
     });
 
     expect(JSON.parse(legacyManaged.altTextDescription ?? "{}")).toMatchObject({
-      version: 3,
+      version: 4,
       testTypeId: "GENERAL",
       side: "left",
     });
@@ -725,6 +725,118 @@ describe("Excel evidence service", () => {
     });
 
     expect(first.top).toBe(originalTop);
+  });
+
+  it("regroups non-contiguous exact Generic Headers and keeps sequence-based removal", async () => {
+    const host = createHost();
+    const firstAName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "A",
+      side: "left",
+    });
+    const bName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "B",
+      side: "left",
+    });
+    const secondAName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "A",
+      side: "right",
+    });
+
+    const firstA = host.items.find((shape) => shape.name === firstAName)!;
+    const secondA = host.items.find((shape) => shape.name === secondAName)!;
+    const b = host.items.find((shape) => shape.name === bName)!;
+    const firstMetadata = JSON.parse(firstA.altTextDescription ?? "{}");
+    const secondMetadata = JSON.parse(secondA.altTextDescription ?? "{}");
+    const bMetadata = JSON.parse(b.altTextDescription ?? "{}");
+    expect(firstMetadata).toMatchObject({ version: 4, genericGroupHeader: "A" });
+    expect(secondMetadata.genericGroupId).toBe(firstMetadata.genericGroupId);
+    expect(bMetadata.genericGroupId).not.toBe(firstMetadata.genericGroupId);
+    expect(firstA.top).toBe(secondA.top);
+    expect(b.top).toBeGreaterThan(secondA.top + secondA.height);
+
+    await expect(removeLastInsertedEvidence(scenario, "SOA")).resolves.toBe(secondAName);
+    expect(firstA.deleted).not.toBe(true);
+    expect(b.deleted).not.toBe(true);
+  });
+
+  it("assigns blank Generic Header to most recently used stable group", async () => {
+    const host = createHost();
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "GENERIC_SCREENSHOT", image, caption: "A" });
+    const bName = await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "GENERIC_SCREENSHOT", image, caption: "B", side: "left" });
+    const blankName = await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "GENERIC_SCREENSHOT", image, caption: "", side: "right" });
+    const b = host.items.find((shape) => shape.name === bName)!;
+    const blank = host.items.find((shape) => shape.name === blankName)!;
+    const bMetadata = JSON.parse(b.altTextDescription ?? "{}");
+    const blankMetadata = JSON.parse(blank.altTextDescription ?? "{}");
+    expect(blankMetadata).toMatchObject({
+      genericGroupId: bMetadata.genericGroupId,
+      genericGroupHeader: "B",
+    });
+    expect(blank.top).toBe(b.top);
+  });
+
+  it("aborts Header regrouping before mutation when managed heading was edited", async () => {
+    const host = createHost();
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "GENERIC_SCREENSHOT", image, caption: "A" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "GENERIC_SCREENSHOT", image, caption: "B" });
+    const heading = [...host.headingCells.values()].find((cell) => cell.values[0][0] === "A")!;
+    heading.values = [["User A"]];
+
+    await expect(insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "A",
+    })).rejects.toThrow("contains user content");
+
+    expect(heading.values).toEqual([["User A"]]);
+    expect(host.items.filter((shape) => !shape.deleted && shape.name.startsWith("EV__"))).toHaveLength(2);
+  });
+
+  it("keeps duplicate legacy Header occurrences separate and targets most recent", async () => {
+    const host = createHost();
+    const legacyA1 = createShape("EV__TS4_1_1__GENERIC_SCREENSHOT__001", {
+      top: 520,
+      altTextDescription: JSON.stringify({ version: 3, testTypeId: "SOA", caption: "A", side: "left" }),
+    });
+    const legacyB = createShape("EV__TS4_1_1__GENERIC_SCREENSHOT__002", {
+      top: 800,
+      altTextDescription: JSON.stringify({ version: 3, testTypeId: "SOA", caption: "B", side: "left" }),
+    });
+    const legacyA2 = createShape("EV__TS4_1_1__GENERIC_SCREENSHOT__003", {
+      top: 1080,
+      altTextDescription: JSON.stringify({ version: 3, testTypeId: "SOA", caption: "A", side: "left" }),
+    });
+    host.items.push(legacyA1, legacyB, legacyA2);
+
+    const insertedName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "A",
+      side: "right",
+    });
+    const firstMetadata = JSON.parse(legacyA1.altTextDescription ?? "{}");
+    const secondMetadata = JSON.parse(legacyA2.altTextDescription ?? "{}");
+    const inserted = host.items.find((shape) => shape.name === insertedName)!;
+    const insertedMetadata = JSON.parse(inserted.altTextDescription ?? "{}");
+    expect(firstMetadata.genericGroupId).not.toBe(secondMetadata.genericGroupId);
+    expect(insertedMetadata.genericGroupId).toBe(secondMetadata.genericGroupId);
+    expect(inserted.top).toBe(legacyA2.top);
   });
 
   it.each<ModuleId>([

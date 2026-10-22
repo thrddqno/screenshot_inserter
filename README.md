@@ -132,15 +132,18 @@ New evidence headings use worksheet cells, not shapes:
 Generic Screenshot groups use exact Header matching:
 
 - Same exact text shares one gray heading cell
+- Matching text rejoins its existing managed group even after other Headers were inserted (`A → B → A` displays one `A` block, then `B`)
 - Capitalization and whitespace differences create separate groups
 - Empty values add to most recently used Generic group without creating a header
 - Empty value with no previous Generic group creates an unheaded group
 - Matching images stack vertically without screenshot-count limits
+- Group blocks follow first insertion; images inside each block follow insertion sequence. Visual order can therefore differ from global insertion chronology
+- Legacy metadata upgrades on the next successful insert/remove without merging historical duplicate Header occurrences; a new match targets the most recently used matching legacy group
 
 Generic Screenshot Side is explicit per insertion:
 
 - Left fills `A:D`; Right starts at F and matches the `A:D` width
-- Consecutive opposite sides in the same exact Header group share one row
+- Left followed by Right in the same exact Header group shares one row, even when another Header was inserted between them
 - Consecutive same-side images start separate rows
 - Taller paired image determines where the next row begins
 - Existing Generic screenshots without Side metadata migrate to Left

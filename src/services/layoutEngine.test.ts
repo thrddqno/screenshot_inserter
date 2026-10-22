@@ -234,6 +234,43 @@ describe("buildLayout", () => {
     expect(plan.images[1].top).toBeGreaterThan(plan.images[0].top + plan.images[0].height);
   });
 
+  it("merges non-contiguous Generic images with the same stable group ID", () => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT"],
+      images: [
+        { name: "a-1", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "A", side: "left", genericGroupId: "generic:1", genericGroupHeader: "A" },
+        { name: "b", moduleId: "GENERIC_SCREENSHOT", sequence: 2, naturalWidth: 400, naturalHeight: 200, caption: "B", side: "left", genericGroupId: "generic:2", genericGroupHeader: "B" },
+        { name: "a-2", moduleId: "GENERIC_SCREENSHOT", sequence: 3, naturalWidth: 400, naturalHeight: 300, caption: "A", side: "right", genericGroupId: "generic:1", genericGroupHeader: "A" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+    const a1 = plan.images.find((image) => image.name === "a-1")!;
+    const a2 = plan.images.find((image) => image.name === "a-2")!;
+    const b = plan.images.find((image) => image.name === "b")!;
+    expect(plan.headings.map((heading) => heading.text)).toEqual(["A", "B"]);
+    expect(a1.groupKey).toBe(a2.groupKey);
+    expect(a1.top).toBe(a2.top);
+    expect(b.top).toBeGreaterThan(a2.top + a2.height);
+  });
+
+  it("does not merge non-Generic occurrences separated by a regrouped Generic image", () => {
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT", "PDF_PAPER"],
+      images: [
+        { name: "a-1", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "A", genericGroupId: "generic:1", genericGroupHeader: "A" },
+        { name: "pdf-1", moduleId: "PDF_PAPER", sequence: 2, naturalWidth: 400, naturalHeight: 200, caption: "" },
+        { name: "a-2", moduleId: "GENERIC_SCREENSHOT", sequence: 3, naturalWidth: 400, naturalHeight: 200, caption: "A", genericGroupId: "generic:1", genericGroupHeader: "A" },
+        { name: "pdf-2", moduleId: "PDF_PAPER", sequence: 4, naturalWidth: 400, naturalHeight: 200, caption: "" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+    expect(plan.headings.filter((heading) => heading.text === "PDF")).toHaveLength(2);
+  });
+
   it("pairs consecutive Generic left then right screenshots", () => {
     const plan = buildLayout({
       selectedModules: ["GENERIC_SCREENSHOT"],

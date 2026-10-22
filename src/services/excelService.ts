@@ -30,7 +30,8 @@ const STATUS_TAB_COLORS: Record<Exclude<EvidenceStatus, "UNCHANGED">, string> = 
 };
 const DISCOVERED_STATUS_ADDRESS = /^[A-P](?:[1-9]|1[0-2])$/;
 const CAPTION_MAXIMUM_LENGTH = 500;
-const MANAGED_METADATA_VERSION = 3;
+const MANAGED_METADATA_VERSION = 4;
+const GENERIC_GROUP_ID = /^[A-Za-z0-9:_-]{1,100}$/;
 
 interface ManagedHeadingMetadata {
   address: string;
@@ -42,10 +43,15 @@ interface ManagedShapeMetadata {
   testTypeId: TestTypeId;
   caption: string;
   side?: GenericSide;
+  genericGroupId?: string;
+  genericGroupHeader?: string;
   heading?: ManagedHeadingMetadata;
 }
 
 const isGenericSide = (value: unknown): value is GenericSide => value === "left" || value === "right";
+
+const isGenericGroupId = (value: unknown): value is string =>
+  typeof value === "string" && GENERIC_GROUP_ID.test(value);
 
 const isManagedHeadingAddress = (value: unknown): value is string => {
   if (typeof value !== "string") return false;
@@ -63,7 +69,7 @@ const parseManagedMetadata = (
   try {
     const value = JSON.parse(description) as Partial<ManagedShapeMetadata>;
     if (
-      (value.version === 1 || value.version === 2 || value.version === MANAGED_METADATA_VERSION) &&
+      (value.version === 1 || value.version === 2 || value.version === 3 || value.version === MANAGED_METADATA_VERSION) &&
       typeof value.caption === "string" &&
       value.caption.length <= CAPTION_MAXIMUM_LENGTH
     ) {
@@ -76,11 +82,27 @@ const parseManagedMetadata = (
         testTypeId,
         caption: moduleId === "GENERIC_SCREENSHOT" ? value.caption : "",
         side:
-          moduleId === "GENERIC_SCREENSHOT" && value.version === MANAGED_METADATA_VERSION && isGenericSide(value.side)
+          moduleId === "GENERIC_SCREENSHOT" && value.version >= 3 && isGenericSide(value.side)
             ? value.side
             : moduleId === "GENERIC_SCREENSHOT"
               ? "left"
               : undefined,
+        genericGroupId:
+          moduleId === "GENERIC_SCREENSHOT" &&
+          value.version === MANAGED_METADATA_VERSION &&
+          isGenericGroupId(value.genericGroupId) &&
+          typeof value.genericGroupHeader === "string" &&
+          value.genericGroupHeader.length <= CAPTION_MAXIMUM_LENGTH
+            ? value.genericGroupId
+            : undefined,
+        genericGroupHeader:
+          moduleId === "GENERIC_SCREENSHOT" &&
+          value.version === MANAGED_METADATA_VERSION &&
+          isGenericGroupId(value.genericGroupId) &&
+          typeof value.genericGroupHeader === "string" &&
+          value.genericGroupHeader.length <= CAPTION_MAXIMUM_LENGTH
+            ? value.genericGroupHeader
+            : undefined,
         heading:
           heading &&
           isManagedHeadingAddress(heading.address) &&
@@ -110,6 +132,80 @@ const hasManagedHeading = (moduleId: ModuleId, metadata: ManagedShapeMetadata): 
   if (metadata.heading) return true;
   if (moduleId === "GENERIC_SCREENSHOT") return metadata.caption !== "";
   return EVIDENCE_MODULES[moduleId].showHeading;
+};
+
+interface GenericGroupState {
+  id: string;
+  header: string;
+  lastSequence: number;
+}
+
+const resolveGenericGroups = (
+  images: LayoutImage[],
+  metadataByName: Map<string, ManagedShapeMetadata>,
+  newImageName?: string,
+): void => {
+  const ordered = [...images].sort((first, second) => first.sequence - second.sequence);
+  const groups = new Map<string, GenericGroupState>();
+  let latestGenericGroup: GenericGroupState | undefined;
+  let currentLegacyGroup: GenericGroupState | undefined;
+
+  for (const image of ordered) {
+    if (image.name === newImageName) continue;
+    if (image.moduleId !== "GENERIC_SCREENSHOT") {
+      currentLegacyGroup = undefined;
+      continue;
+    }
+    const metadata = metadataByName.get(image.name);
+    let group: GenericGroupState | undefined;
+    if (metadata?.genericGroupId && metadata.genericGroupHeader !== undefined) {
+      const known = groups.get(metadata.genericGroupId);
+      if (!known || known.header === metadata.genericGroupHeader) {
+        group = known ?? {
+          id: metadata.genericGroupId,
+          header: metadata.genericGroupHeader,
+          lastSequence: image.sequence,
+        };
+      }
+    }
+    if (!group) {
+      const header = image.caption !== "" ? image.caption : latestGenericGroup?.header ?? "";
+      if (currentLegacyGroup?.header === header) {
+        group = currentLegacyGroup;
+      } else {
+        group = { id: `legacy:${image.sequence}`, header, lastSequence: image.sequence };
+      }
+      currentLegacyGroup = group;
+    } else {
+      currentLegacyGroup = undefined;
+    }
+    group.lastSequence = Math.max(group.lastSequence, image.sequence);
+    groups.set(group.id, group);
+    latestGenericGroup = group;
+    image.genericGroupId = group.id;
+    image.genericGroupHeader = group.header;
+    if (metadata) {
+      metadata.genericGroupId = group.id;
+      metadata.genericGroupHeader = group.header;
+    }
+  }
+
+  if (!newImageName) return;
+  const image = images.find((candidate) => candidate.name === newImageName);
+  const metadata = metadataByName.get(newImageName);
+  if (!image || image.moduleId !== "GENERIC_SCREENSHOT" || !metadata) return;
+  const candidates = [...groups.values()].filter(
+    (group) => image.caption === "" || group.header === image.caption,
+  );
+  const group = candidates.sort((first, second) => second.lastSequence - first.lastSequence)[0] ?? {
+    id: `generic:${image.sequence}`,
+    header: image.caption,
+    lastSequence: image.sequence,
+  };
+  image.genericGroupId = group.id;
+  image.genericGroupHeader = group.header;
+  metadata.genericGroupId = group.id;
+  metadata.genericGroupHeader = group.header;
 };
 
 export const toLiteralCellFormula = (value: string): string => (value === "" ? "" : `'${value}`);
@@ -461,6 +557,8 @@ export const insertEvidence = async ({
           naturalHeight: shape.height,
           caption: metadata.caption,
           side: metadata.side,
+          genericGroupId: metadata.genericGroupId,
+          genericGroupHeader: metadata.genericGroupHeader,
         });
       }
 
@@ -479,6 +577,7 @@ export const insertEvidence = async ({
         caption: effectiveCaption,
         side: moduleId === "GENERIC_SCREENSHOT" ? effectiveSide : undefined,
       });
+      resolveGenericGroups(layoutImages, metadataByName, createdImageName);
       modulesWithImages.add(moduleId);
 
       const activeModules = [...modulesWithImages];
@@ -613,6 +712,8 @@ export const insertEvidence = async ({
           testTypeId,
           caption: layoutImage?.caption ?? "",
           side: placement.moduleId === "GENERIC_SCREENSHOT" ? layoutImage?.side ?? "left" : undefined,
+          genericGroupId: layoutImage?.genericGroupId,
+          genericGroupHeader: layoutImage?.genericGroupHeader,
           heading: headingByGroupAndModule.get(`${placement.groupKey}|${placement.moduleId}`),
         } satisfies ManagedShapeMetadata);
       }
@@ -700,7 +801,11 @@ export const removeLastInsertedEvidence = async (
       naturalHeight: shape.height,
       caption: metadata.caption,
       side: metadata.side,
+      genericGroupId: metadata.genericGroupId,
+      genericGroupHeader: metadata.genericGroupHeader,
     }));
+    const remainingMetadata = new Map(remaining.map((item) => [item.shape.name, item.metadata]));
+    resolveGenericGroups(layoutImages, remainingMetadata);
     const originalBaseTop = Math.max(0, Math.min(...candidates.map(({ shape, parsed, metadata }) =>
       shape.top - (parsed && metadata && hasManagedHeading(parsed.moduleId, metadata)
         ? LAYOUT_CONFIG.headingHeight + LAYOUT_CONFIG.headingGap
@@ -807,6 +912,8 @@ export const removeLastInsertedEvidence = async (
         testTypeId,
         caption: item.metadata.caption,
         side: placement.moduleId === "GENERIC_SCREENSHOT" ? item.metadata.side ?? "left" : undefined,
+        genericGroupId: item.metadata.genericGroupId,
+        genericGroupHeader: item.metadata.genericGroupHeader,
         heading: headingByGroupAndModule.get(`${placement.groupKey}|${placement.moduleId}`),
       } satisfies ManagedShapeMetadata);
     }
