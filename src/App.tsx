@@ -45,7 +45,7 @@ const HEADER_PERSIST_DELAY_MS = 400;
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Unexpected error occurred.";
 
-type AppIconName = "scenario" | "status" | "image" | "paste" | "plus" | "trash" | "eraser" | "success" | "error" | "info" | "help";
+type AppIconName = "scenario" | "status" | "image" | "paste" | "plus" | "trash" | "close" | "success" | "error" | "info" | "help";
 
 const AppIcon = ({ name, className = "" }: { name: AppIconName; className?: string }) => {
   const paths: Record<AppIconName, ReactNode> = {
@@ -55,7 +55,7 @@ const AppIcon = ({ name, className = "" }: { name: AppIconName; className?: stri
     paste: <><path d="M9 5h6M10 3h4a2 2 0 0 1 2 2v2H8V5a2 2 0 0 1 2-2Z" /><path d="M7 6H5v15h14V6h-2" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
     trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6" /></>,
-    eraser: <><path d="m4 15 8-9 7 7-7 8H7z" /><path d="m10 18 5-6M12 21h8" /></>,
+    close: <path d="m7 7 10 10M17 7 7 17" />,
     success: <><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></>,
     error: <><circle cx="12" cy="12" r="9" /><path d="m9 9 6 6M15 9l-6 6" /></>,
     info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></>,
@@ -561,7 +561,7 @@ export default function App() {
         <aside className="update-notice" role="status" aria-live="polite">
           <span>
             {pendingImage
-              ? "New version available. Insert or clear pending screenshot before updating."
+              ? "New version available. Insert or remove pending screenshot before updating."
               : "New version available."}
           </span>
           <button
@@ -678,6 +678,16 @@ export default function App() {
             <>
               <div className="preview-media">
                 <img src={pendingImage.previewUrl} alt="Pending screenshot preview" />
+                <button
+                  className="button button-secondary preview-clear-button"
+                  type="button"
+                  aria-label="Remove pending screenshot"
+                  title="Remove pending screenshot"
+                  disabled={busy}
+                  onClick={clearPending}
+                >
+                  <AppIcon name="close" />
+                </button>
               </div>
               <div className="preview-metadata">
                 <p>{pendingImage.mimeType.replace("image/", "").toUpperCase()} · {(pendingImage.size / 1024).toFixed(1)} KB</p>
@@ -721,10 +731,6 @@ export default function App() {
         <button className="button button-danger" type="button" disabled={busy || !scenario} onClick={() => void handleRemove()}>
           <AppIcon name="trash" />
           Remove Last Inserted
-        </button>
-        <button className="button button-secondary" type="button" disabled={busy || !pendingImage} onClick={clearPending}>
-          <AppIcon name="eraser" />
-          Clear Pending
         </button>
       </div>
 

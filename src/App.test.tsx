@@ -45,7 +45,7 @@ describe("task pane", () => {
     expect(screen.getByRole("button", { name: "Use pasted Excel picture" })).toHaveClass("button-secondary");
     expect(screen.getByRole("button", { name: "Insert" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove Last Inserted" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear Pending" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Remove pending screenshot" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refresh test scenario" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("target", "_blank");
@@ -478,10 +478,10 @@ describe("task pane", () => {
     });
 
     expect(await screen.findByAltText("Pending screenshot preview")).toBeVisible();
-    expect(screen.getByText("New version available. Insert or clear pending screenshot before updating.")).toBeVisible();
+    expect(screen.getByText("New version available. Insert or remove pending screenshot before updating.")).toBeVisible();
     const updateButton = screen.getByRole("button", { name: "Update now" });
     expect(updateButton).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Clear Pending" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove pending screenshot" }));
     expect(updateButton).toBeEnabled();
   });
 
