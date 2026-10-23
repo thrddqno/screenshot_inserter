@@ -55,9 +55,6 @@ details { border-top: 1px solid var(--border); }
 details:last-of-type { border-bottom: 1px solid var(--border); }
 summary { cursor: pointer; font-size: 16px; font-weight: 700; padding: 16px 4px; }
 details p { color: #425064; margin: -5px 4px 17px; }
-.check-list { display: grid; gap: 10px; list-style: none; padding: 0; }
-.check-list li { padding-left: 31px; position: relative; }
-.check-list li::before { color: #107c41; content: "✓"; font-size: 20px; font-weight: 800; left: 3px; position: absolute; }
 footer { align-items: center; background: #172033; color: #fff; display: flex; justify-content: space-between; padding: 24px max(24px, calc((100% - 1012px) / 2)); }
 footer p { margin: 0; }
 footer a { color: #fff; }
