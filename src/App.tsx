@@ -506,48 +506,44 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div>
-          <p className="eyebrow">Excel screenshot organizer</p>
-          <h1>Test Evidence Inserter</h1>
-          <label className="test-type-field">
-            <span>Test Type</span>
-            <select
-              aria-label="Test Type"
-              value={testTypeId}
-              disabled={busy}
-              onChange={(event) => {
-                const nextTestTypeId = event.target.value as TestTypeId;
-                const nextPreferences: WorkbookPreferences = {
-                  ...preferencesRef.current,
-                  testTypeId: nextTestTypeId,
-                };
-                const nextForm = nextPreferences.profiles[nextTestTypeId];
-                setTestTypeId(nextTestTypeId);
-                setEvidenceType(nextForm.evidenceType);
-                setCaption(nextForm.header);
-                setGenericSide(nextForm.genericSide);
-                queuePreferences(nextPreferences);
-              }}
-            >
-              {AVAILABLE_TEST_TYPES.map((profile) => (
-                <option value={profile.id} key={profile.id}>{profile.displayName}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className="header-actions">
+        <p className="eyebrow">Excel screenshot organizer</p>
+        <h1 className="content-title">Insert Evidence</h1>
+        <label className="test-type-label" htmlFor="test-type">Test Type</label>
+        <div className="test-type-actions">
+          <select
+            id="test-type"
+            value={testTypeId}
+            disabled={busy}
+            onChange={(event) => {
+              const nextTestTypeId = event.target.value as TestTypeId;
+              const nextPreferences: WorkbookPreferences = {
+                ...preferencesRef.current,
+                testTypeId: nextTestTypeId,
+              };
+              const nextForm = nextPreferences.profiles[nextTestTypeId];
+              setTestTypeId(nextTestTypeId);
+              setEvidenceType(nextForm.evidenceType);
+              setCaption(nextForm.header);
+              setGenericSide(nextForm.genericSide);
+              queuePreferences(nextPreferences);
+            }}
+          >
+            {AVAILABLE_TEST_TYPES.map((profile) => (
+              <option value={profile.id} key={profile.id}>{profile.displayName}</option>
+            ))}
+          </select>
           <a
-            className="button button-secondary help-link"
+            className="button button-secondary header-action-button help-link"
             href={import.meta.env.BASE_URL}
             target="_blank"
             rel="noopener noreferrer"
-            title="Open Screenshot Inserter Docs"
+            aria-label="Help"
+            title="Help"
           >
             <AppIcon name="help" />
-            Help
           </a>
           <button
-            className="button button-secondary refresh-button"
+            className="button button-secondary header-action-button refresh-button"
             type="button"
             aria-label="Refresh test scenario"
             title="Refresh test scenario"

@@ -32,7 +32,7 @@ describe("task pane", () => {
     vi.stubGlobal("Excel", undefined);
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Test Evidence Inserter" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Insert Evidence" })).toBeVisible();
     const testType = screen.getByLabelText("Test Type");
     expect(testType).toHaveValue("GENERAL");
     expect(testType.querySelectorAll("option")).toHaveLength(2);
