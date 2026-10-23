@@ -11,7 +11,7 @@
   <Description DefaultValue="Safely organizes test-evidence screenshots in Excel."/>
   <IconUrl DefaultValue="https://thrddqno.github.io/screenshot_inserter/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://thrddqno.github.io/screenshot_inserter/assets/icon-80.png"/>
-  <SupportUrl DefaultValue="https://github.com/thrddqno/screenshot_inserter"/>
+  <SupportUrl DefaultValue="https://thrddqno.github.io/screenshot_inserter/"/>
   <AppDomains>
     <AppDomain>https://thrddqno.github.io</AppDomain>
   </AppDomains>

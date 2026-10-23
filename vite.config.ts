@@ -82,7 +82,10 @@ export default defineConfig(({ command, mode }) => {
       emptyOutDir: true,
       sourcemap: false,
       rollupOptions: {
-        input: resolve("taskpane.html"),
+        input: {
+          docs: resolve("index.html"),
+          taskpane: resolve("taskpane.html"),
+        },
       },
     },
     test: {

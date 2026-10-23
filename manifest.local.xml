@@ -11,7 +11,7 @@
   <Description DefaultValue="Safely organizes test-evidence screenshots in Excel."/>
   <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png"/>
-  <SupportUrl DefaultValue="https://localhost:3000/taskpane.html"/>
+  <SupportUrl DefaultValue="https://localhost:3000/"/>
   <AppDomains>
     <AppDomain>https://localhost:3000</AppDomain>
   </AppDomains>

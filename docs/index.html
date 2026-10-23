@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Quick reference guide for Screenshot Inserter." />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+    <title>Screenshot Inserter Docs</title>
+    <link rel="stylesheet" crossorigin href="/screenshot_inserter/assets/docs-Cun6_zpl.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to guide</a>
+    <header class="hero">
+      <div class="hero-inner">
+        <p class="eyebrow">Quick reference guide</p>
+        <h1>Screenshot Inserter Docs</h1>
+        <p class="hero-copy">Add test screenshots to Excel without moving or resizing them by hand.</p>
+        <a class="start-link" href="#quick-start">Start here</a>
+      </div>
+    </header>
+
+    <div class="page-shell">
+      <nav class="contents" aria-label="Guide sections">
+        <strong>On this page</strong>
+        <a href="#quick-start">Quick start</a>
+        <a href="#screen">Know the screen</a>
+        <a href="#paste">Paste a screenshot</a>
+        <a href="#workbook-picture">Use another workbook</a>
+        <a href="#side-header">Side and Header</a>
+        <a href="#mistakes">Fix mistakes</a>
+        <a href="#problems">Common problems</a>
+        <a href="#safe-use">Safe use</a>
+      </nav>
+
+      <main id="main-content">
+        <section id="quick-start" class="guide-section">
+          <p class="section-number">01</p>
+          <h2>Quick start</h2>
+          <ol class="steps">
+            <li>Open test scenario sheet.</li>
+            <li>Pick <strong>Test Type</strong>.</li>
+            <li>Pick <strong>Evidence Type</strong>.</li>
+            <li>Copy screenshot, then press <kbd>Ctrl</kbd> + <kbd>V</kbd>.</li>
+            <li>Check preview.</li>
+            <li>Select <strong>Insert</strong>.</li>
+            <li>Wait for green success message.</li>
+          </ol>
+          <figure>
+            <a href="./assets/docs/task-pane-overview.png" target="_blank" rel="noopener noreferrer">
+              <img src="/screenshot_inserter/assets/docs/task-pane-overview.png" alt="Screenshot Inserter task pane showing scenario, status, screenshot controls, and action buttons" />
+            </a>
+            <figcaption>Main task pane. Select image to enlarge.</figcaption>
+          </figure>
+        </section>
+
+        <section id="screen" class="guide-section">
+          <p class="section-number">02</p>
+          <h2>Know the screen</h2>
+          <div class="info-grid">
+            <article>
+              <h3>Test Scenario</h3>
+              <p>Shows test being updated. Open Condition or Expected Result when you need more detail.</p>
+            </article>
+            <article>
+              <h3>Worksheet Status</h3>
+              <p><strong>PASS/FAIL</strong> means not final. Choose <strong>PASS</strong> or <strong>FAIL</strong> when result is known.</p>
+            </article>
+            <article>
+              <h3>Evidence Type</h3>
+              <p>Choose where screenshot belongs. General tests use Generic Screenshot.</p>
+            </article>
+          </div>
+          <p class="note"><strong>Not loaded?</strong> Open correct scenario sheet, then select refresh button.</p>
+        </section>
+
+        <section id="paste" class="guide-section">
+          <p class="section-number">03</p>
+          <h2>Paste a screenshot</h2>
+          <ol class="steps">
+            <li>Copy PNG or JPEG screenshot.</li>
+            <li>Click task pane.</li>
+            <li>Press <kbd>Ctrl</kbd> + <kbd>V</kbd>.</li>
+            <li>Check preview and file size.</li>
+            <li>Select <strong>Insert</strong>.</li>
+          </ol>
+          <p>Maximum size: <strong>10 MB</strong>.</p>
+          <figure>
+            <a href="./assets/docs/pending-preview.png" target="_blank" rel="noopener noreferrer">
+              <img src="/screenshot_inserter/assets/docs/pending-preview.png" alt="Screenshot preview with PNG file type and size shown at bottom" />
+            </a>
+            <figcaption>File type and size appear below preview.</figcaption>
+          </figure>
+        </section>
+
+        <section id="workbook-picture" class="guide-section">
+          <p class="section-number">04</p>
+          <h2>Use picture from another workbook</h2>
+          <ol class="steps">
+            <li>Copy picture from source workbook.</li>
+            <li>Open destination workbook.</li>
+            <li>Paste picture onto scenario sheet.</li>
+            <li>Select <strong>Use pasted Excel picture</strong>.</li>
+            <li>Select picture you pasted.</li>
+            <li>Check preview, then select <strong>Insert</strong>.</li>
+          </ol>
+          <p class="note">Temporary pasted picture is replaced after successful insertion.</p>
+        </section>
+
+        <section id="side-header" class="guide-section">
+          <p class="section-number">05</p>
+          <h2>Side and Header</h2>
+          <p>These choices appear for Generic Screenshot.</p>
+          <div class="info-grid two-column">
+            <article>
+              <h3>Side</h3>
+              <p><strong>Left (A:D)</strong> places image on left. <strong>Right (F:I)</strong> places image on right.</p>
+            </article>
+            <article>
+              <h3>Header</h3>
+              <p>Add label for screenshot group. Same exact Header keeps matching screenshots together. Select <strong>Clear</strong> when no heading is needed.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="mistakes" class="guide-section">
+          <p class="section-number">06</p>
+          <h2>Fix mistakes</h2>
+          <div class="info-grid two-column">
+            <article>
+              <h3>Clear Pending</h3>
+              <p>Use before insertion. Removes preview only.</p>
+            </article>
+            <article>
+              <h3>Remove Last Inserted</h3>
+              <p>Use after insertion. Removes latest screenshot added by tool.</p>
+            </article>
+          </div>
+          <p class="warning"><strong>Check scenario first.</strong> Remove works on scenario currently loaded.</p>
+        </section>
+
+        <section id="problems" class="guide-section">
+          <p class="section-number">07</p>
+          <h2>Common problems</h2>
+          <details>
+            <summary>Scenario says “Not loaded”</summary>
+            <p>Open scenario worksheet. If using Summary, select correct test row. Then select refresh button.</p>
+          </details>
+          <details>
+            <summary>Paste does nothing</summary>
+            <p>Copy screenshot again. Click task pane, then press <kbd>Ctrl</kbd> + <kbd>V</kbd>. Confirm image is PNG or JPEG.</p>
+          </details>
+          <details>
+            <summary>Insert button is disabled</summary>
+            <p>Check that scenario is loaded and screenshot preview is visible.</p>
+          </details>
+          <details>
+            <summary>Excel picture is not detected</summary>
+            <p>Paste picture onto destination worksheet first. Select <strong>Use pasted Excel picture</strong>, then select picture.</p>
+          </details>
+          <details>
+            <summary>Wrong Side or Header</summary>
+            <p>Remove wrong insertion. Change Side or Header, then insert again.</p>
+          </details>
+        </section>
+
+        <section id="safe-use" class="guide-section">
+          <p class="section-number">08</p>
+          <h2>Safe use</h2>
+          <ul class="check-list">
+            <li>Check screenshot for private data.</li>
+            <li>Confirm correct workbook and scenario.</li>
+            <li>Review preview before insertion.</li>
+            <li>Keep original workbook copy while testing changes.</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      <p>Screenshot Inserter Docs</p>
+      <a href="#quick-start">Back to top</a>
+    </footer>
+  </body>
+</html>

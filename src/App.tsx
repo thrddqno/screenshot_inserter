@@ -45,7 +45,7 @@ const HEADER_PERSIST_DELAY_MS = 400;
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Unexpected error occurred.";
 
-type AppIconName = "scenario" | "status" | "image" | "paste" | "plus" | "trash" | "eraser" | "success" | "error" | "info";
+type AppIconName = "scenario" | "status" | "image" | "paste" | "plus" | "trash" | "eraser" | "success" | "error" | "info" | "help";
 
 const AppIcon = ({ name, className = "" }: { name: AppIconName; className?: string }) => {
   const paths: Record<AppIconName, ReactNode> = {
@@ -59,6 +59,7 @@ const AppIcon = ({ name, className = "" }: { name: AppIconName; className?: stri
     success: <><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></>,
     error: <><circle cx="12" cy="12" r="9" /><path d="m9 9 6 6M15 9l-6 6" /></>,
     info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></>,
+    help: <><circle cx="12" cy="12" r="9" /><path d="M9.7 9a2.5 2.5 0 1 1 4.1 1.9c-1 .8-1.8 1.2-1.8 2.6M12 17h.01" /></>,
   };
   return <svg className={`app-icon ${className}`} viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
 };
@@ -534,18 +535,30 @@ export default function App() {
             </select>
           </label>
         </div>
-        <button
-          className="button button-secondary refresh-button"
-          type="button"
-          aria-label="Refresh test scenario"
-          title="Refresh test scenario"
-          onClick={() => void refreshScenario(true)}
-          disabled={busy}
-        >
-          <svg className={`refresh-icon ${refreshing ? "is-spinning" : ""}`} viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18 6l2 5M17.9 15A7 7 0 0 1 6 18l-2-5" />
-          </svg>
-        </button>
+        <div className="header-actions">
+          <a
+            className="button button-secondary help-link"
+            href={import.meta.env.BASE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open Screenshot Inserter Docs"
+          >
+            <AppIcon name="help" />
+            Help
+          </a>
+          <button
+            className="button button-secondary refresh-button"
+            type="button"
+            aria-label="Refresh test scenario"
+            title="Refresh test scenario"
+            onClick={() => void refreshScenario(true)}
+            disabled={busy}
+          >
+            <svg className={`refresh-icon ${refreshing ? "is-spinning" : ""}`} viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18 6l2 5M17.9 15A7 7 0 0 1 6 18l-2-5" />
+            </svg>
+          </button>
+        </div>
       </header>
 
       {availableVersion ? (

@@ -12,12 +12,19 @@ src/services/layoutEngine.ts    Pure pairing and geometry engine
 src/services/shapeNames.ts      Managed shape names and sequences
 src/services/excelService.ts    Office.js workbook reads and writes
 src/App.tsx                     One modular task-pane UI
+index.html                      Screenshot Inserter Docs page
+documentation/site.css         Documentation page styling
+public/assets/docs/             Documentation screenshots
 manifest.xml                    Stable XML add-in manifest
 manifest.local.xml              Local HTTPS development manifest
 docs/                           GitHub Pages production bundle
 ```
 
 Task pane checks same-origin `version.json` at startup, when window regains focus, and every 15 minutes. New releases show an **Update now** notice. Reload stays user-controlled and is blocked while a screenshot is pending, preventing clipboard-image loss. No cookies, browser history, or Office authentication state are cleared.
+
+User guide: `https://thrddqno.github.io/screenshot_inserter/`. The task-pane **Help** link opens the guide in a new browser tab.
+
+Documentation source lives outside generated `docs/`. Update `index.html`, `documentation/site.css`, or sanitized images in `public/assets/docs/`, then run `npm run build`. Keep screenshot filenames stable, use a demonstration workbook, and remove names, paths, URLs, credentials, and private data before capture.
 
 Every evidence module remains available in Evidence Type dropdown. Tester chooses module manually; no automatic suggestion or scenario classification runs.
 

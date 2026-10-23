@@ -28,6 +28,9 @@ button, input, select { font: inherit; }
   gap: 14px;
   grid-template-columns: minmax(0, 1fr) auto;
 }
+.header-actions { align-items: center; display: flex; gap: 6px; }
+.help-link { color: var(--brand); text-decoration: none; }
+.help-link .app-icon { height: 18px; width: 18px; }
 
 h1 { font-size: 25px; line-height: 1.15; margin: 3px 0 10px; }
 h2 {
@@ -272,6 +275,7 @@ input[type="text"]:focus, select:focus {
   .test-type-field { grid-template-columns: 70px minmax(0, 1fr); }
   .actions { grid-template-columns: 1fr 1fr; }
   .button { padding-inline: 8px; }
+  .help-link { gap: 4px; padding-inline: 7px; }
 }
 
 @media (max-height: 760px) {

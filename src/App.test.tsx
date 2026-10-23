@@ -47,6 +47,9 @@ describe("task pane", () => {
     expect(screen.getByRole("button", { name: "Remove Last Inserted" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear Pending" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Refresh test scenario" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("rel", "noopener noreferrer");
     const evidenceType = screen.getByLabelText("Evidence Type");
     expect(evidenceType.querySelectorAll("option")).toHaveLength(1);
     expect(evidenceType).toHaveValue("GENERIC_SCREENSHOT");
