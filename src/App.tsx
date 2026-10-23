@@ -667,9 +667,13 @@ export default function App() {
         <div className={`paste-zone ${pendingImage ? "has-image" : ""}`} tabIndex={0} aria-label="Screenshot paste area">
           {pendingImage ? (
             <>
-              <img src={pendingImage.previewUrl} alt="Pending screenshot preview" />
-              <p>{pendingImage.mimeType.replace("image/", "").toUpperCase()} · {(pendingImage.size / 1024).toFixed(1)} KB</p>
-              {pendingWorkbookPicture ? <p>Worksheet picture: {pendingWorkbookPicture.name}</p> : null}
+              <div className="preview-media">
+                <img src={pendingImage.previewUrl} alt="Pending screenshot preview" />
+              </div>
+              <div className="preview-metadata">
+                <p>{pendingImage.mimeType.replace("image/", "").toUpperCase()} · {(pendingImage.size / 1024).toFixed(1)} KB</p>
+                {pendingWorkbookPicture ? <p>Worksheet picture: {pendingWorkbookPicture.name}</p> : null}
+              </div>
             </>
           ) : (
             <>

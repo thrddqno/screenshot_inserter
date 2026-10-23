@@ -292,7 +292,9 @@ describe("task pane", () => {
     fireEvent.paste(document, {
       clipboardData: { items: [{ kind: "file", type: "image/png" }] },
     });
-    await screen.findByAltText("Pending screenshot preview");
+    const preview = await screen.findByAltText("Pending screenshot preview");
+    expect(preview).toBeVisible();
+    expect(screen.getByText("PNG · 0.1 KB").closest(".preview-metadata")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Insert" }));
 
     await screen.findByText("Inserted EV__TS6_1__GENERIC_SCREENSHOT__001 into TS6.1.");
