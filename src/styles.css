@@ -28,9 +28,10 @@ button, input, select { font: inherit; }
   gap: 14px;
   grid-template-columns: minmax(0, 1fr) auto;
 }
-.header-actions { align-items: center; display: flex; gap: 6px; }
-.help-link { color: var(--brand); text-decoration: none; }
-.help-link .app-icon { height: 18px; width: 18px; }
+.header-actions { align-items: center; align-self: end; display: flex; gap: 6px; }
+.header-actions .button { height: 44px; }
+.help-link { color: var(--brand); min-width: 88px; text-decoration: none; }
+.help-link .app-icon { height: 22px; width: 22px; }
 
 h1 { font-size: 25px; line-height: 1.15; margin: 3px 0 10px; }
 h2 {
@@ -231,7 +232,7 @@ input[type="text"]:focus, select:focus {
 .button-primary:not(:disabled):hover { background: var(--brand-strong); }
 .button-secondary { background: #fff; border-color: #aeb5bc; color: #242424; }
 .button-danger { background: #fff8f8; border-color: #e26a73; color: #c50f1f; }
-.refresh-button { align-self: end; min-width: 44px; padding: 8px; }
+.refresh-button { min-width: 44px; padding: 8px; width: 44px; }
 .refresh-icon { fill: none; height: 22px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; width: 22px; }
 .refresh-icon.is-spinning { animation: refresh-spin .8s linear infinite; }
 
@@ -276,6 +277,11 @@ input[type="text"]:focus, select:focus {
   .actions { grid-template-columns: 1fr 1fr; }
   .button { padding-inline: 8px; }
   .help-link { gap: 4px; padding-inline: 7px; }
+}
+
+@media (max-width: 300px) {
+  .app-header { gap: 8px; grid-template-columns: minmax(0, 1fr); }
+  .header-actions { justify-content: flex-end; }
 }
 
 @media (max-height: 760px) {
