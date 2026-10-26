@@ -233,4 +233,4 @@ Company rollout should use approved internal HTTPS hosting or private GitHub Ent
 - Real Excel host acceptance must run on Windows Excel and Excel for web.
 - Excel copies worksheet pictures as Office drawing objects that task-pane clipboard APIs cannot read directly. Cross-workbook transfer therefore requires a temporary native Excel paste onto the destination worksheet before selecting **Use pasted Excel picture**.
 - Manual position changes to add-in-managed images are normalized during the next insertion or removal; unrelated shapes remain untouched.
-- Evidence count is not updated because reference workbook defines no configured count cell.
+- Evidence count is not updated because no evidence-count cell is configured.

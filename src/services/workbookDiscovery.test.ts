@@ -29,7 +29,7 @@ describe("workbook scenario discovery", () => {
     });
   });
 
-  it("supports reference workbook TS NO. labels", () => {
+  it("supports TS NO. labels", () => {
     const result = discoverScenario(
       [
         ["TS NO.", "CONDITION", "EXPECTED RESULTS", "STATUS"],
