@@ -6,6 +6,12 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 
 const VERSION_INPUTS = ["src", "taskpane.html", "package.json", "package-lock.json", "vite.config.ts"];
+const repositoryPath = (path: string): string => relative(process.cwd(), path).replaceAll("\\", "/");
+
+const isRuntimeVersionInput = (path: string): boolean => {
+  const normalized = repositoryPath(path);
+  return !normalized.startsWith("src/test/") && !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(normalized);
+};
 
 const collectFiles = (path: string): string[] => {
   if (!statSync(path).isDirectory()) return [path];
@@ -16,8 +22,12 @@ const collectFiles = (path: string): string[] => {
 
 const createBuildVersion = (): string => {
   const hash = createHash("sha256");
-  for (const input of VERSION_INPUTS.flatMap((path) => collectFiles(resolve(path))).sort()) {
-    hash.update(relative(process.cwd(), input));
+  const inputs = VERSION_INPUTS
+    .flatMap((path) => collectFiles(resolve(path)))
+    .filter(isRuntimeVersionInput)
+    .sort();
+  for (const input of inputs) {
+    hash.update(repositoryPath(input));
     hash.update("\0");
     hash.update(readFileSync(input));
     hash.update("\0");
