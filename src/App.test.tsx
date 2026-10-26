@@ -130,6 +130,62 @@ describe("task pane", () => {
     expect(screen.getByRole("button", { name: "Insert" })).toBeDisabled();
   });
 
+  it("arranges evidence in a secondary view and confirms dirty Back", async () => {
+    const scenario = {
+      worksheetName: "TS6.1",
+      scenarioId: "TS6.1",
+      condition: "Condition",
+      expectedResult: "Result",
+    };
+    const groups = [
+      {
+        key: "generic:1",
+        label: "Login",
+        moduleIds: ["GENERIC_SCREENSHOT" as const],
+        imageCount: 1,
+        firstSequence: 1,
+        kind: "generic" as const,
+        showHeading: true,
+      },
+      {
+        key: "PDF_PAPER+AFP:2",
+        label: "PDF + AFP",
+        moduleIds: ["PDF_PAPER" as const, "AFP" as const],
+        imageCount: 2,
+        firstSequence: 2,
+        kind: "paired" as const,
+        showHeading: true,
+      },
+    ];
+    vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
+    vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
+      preferences: preferences("SOA"),
+    });
+    vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
+    vi.spyOn(excelService, "readCurrentScenario").mockResolvedValue({ kind: "loaded", scenario });
+    vi.spyOn(excelService, "readEvidenceArrangement").mockResolvedValue({ groups, hasManualOrder: false });
+    const apply = vi.spyOn(excelService, "applyEvidenceArrangement").mockResolvedValue({
+      groups: [...groups].reverse(),
+      hasManualOrder: true,
+    });
+
+    render(<App />);
+    await screen.findByText("TS6.1");
+    fireEvent.click(screen.getByRole("button", { name: "Arrange Evidence" }));
+    const moveLogin = await screen.findByRole("button", { name: "Move Login down" });
+    expect(screen.getByRole("heading", { name: "Arrange Evidence" })).toBeVisible();
+    fireEvent.click(moveLogin);
+    fireEvent.click(screen.getByRole("button", { name: /Back/ }));
+    expect(screen.getByRole("dialog", { name: "Discard arrangement changes?" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Apply Arrangement" }));
+
+    expect(await screen.findByText("Evidence arrangement applied to TS6.1.")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Insert Evidence" })).toBeVisible();
+    expect(apply).toHaveBeenCalledWith(scenario, "SOA", ["PDF_PAPER+AFP:2", "generic:1"]);
+  });
+
   it("hydrates saved form choices before scenario Status loads", async () => {
     const savedPreferences = preferences("SOA");
     savedPreferences.status = "FAIL";

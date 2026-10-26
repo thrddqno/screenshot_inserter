@@ -13,7 +13,20 @@ import type {
 } from "../types/evidence";
 import { createPendingImage } from "./imageValidation";
 import { discoverScenario, findSummaryScenarioColumn, isSummaryWorksheet } from "./workbookDiscovery";
-import { buildLayout, type LayoutAnchors, type LayoutImage, type Rectangle } from "./layoutEngine";
+import {
+  arrangementScope,
+  loadGroupOrder,
+  normalizeGroupOrder,
+  saveGroupOrder,
+} from "./evidenceArrangement";
+import {
+  buildLayout,
+  getEvidenceGroups,
+  type EvidenceGroupDescriptor,
+  type LayoutAnchors,
+  type LayoutImage,
+  type Rectangle,
+} from "./layoutEngine";
 import {
   captionShapeName,
   imageShapeName,
@@ -477,6 +490,137 @@ const anchorsFromRanges = (
   full: { left: fullRange.left, top: 0, width: fullRange.width, height: 0 },
 });
 
+interface PendingHeading {
+  heading: ReturnType<typeof buildLayout>["headings"][number];
+  cell: Excel.Range;
+  address: string;
+}
+
+interface PreparedEvidenceReflow {
+  plan: ReturnType<typeof buildLayout>;
+  previousHeadingRanges: Array<{ heading: ManagedHeadingMetadata; range: Excel.Range }>;
+  pendingHeadings: PendingHeading[];
+}
+
+const prepareEvidenceReflow = async ({
+  context,
+  sheet,
+  testTypeId,
+  layoutImages,
+  previousMetadata,
+  anchors,
+  requestedBaseTop,
+  obstacles,
+  groupOrder,
+}: {
+  context: Excel.RequestContext;
+  sheet: Excel.Worksheet;
+  testTypeId: TestTypeId;
+  layoutImages: readonly LayoutImage[];
+  previousMetadata: Iterable<ManagedShapeMetadata>;
+  anchors: LayoutAnchors;
+  requestedBaseTop: number;
+  obstacles: readonly Rectangle[];
+  groupOrder?: readonly string[];
+}): Promise<PreparedEvidenceReflow> => {
+  const previousHeadings = new Map<string, ManagedHeadingMetadata>();
+  for (const metadata of previousMetadata) {
+    if (metadata.heading) previousHeadings.set(metadata.heading.address, metadata.heading);
+  }
+  const previousHeadingRanges = [...previousHeadings.values()].map((heading) => ({
+    heading,
+    range: sheet.getRange(heading.address),
+  }));
+  previousHeadingRanges.forEach(({ range }) => range.load("values"));
+  if (previousHeadingRanges.length > 0) await context.sync();
+  for (const { heading, range } of previousHeadingRanges) {
+    const value = range.values[0]?.[0];
+    if (value !== "" && value != null && value !== heading.text) {
+      throw new ExcelServiceError(`Heading cell ${heading.address} contains user content.`);
+    }
+  }
+
+  const plan = buildLayout({
+    selectedModules: [...new Set(layoutImages.map((image) => image.moduleId))],
+    images: layoutImages,
+    groupOrder,
+    anchors,
+    requestedBaseTop,
+    obstacles,
+  });
+  const headingRows = new Map<number, number>();
+  const pendingHeadings: PendingHeading[] = [];
+  for (const heading of plan.headings) {
+    let rowIndex = headingRows.get(heading.top);
+    if (rowIndex === undefined) {
+      rowIndex = await resolveRowAtTop(context, sheet, heading.top);
+      headingRows.set(heading.top, rowIndex);
+    }
+    const columnIndex = EVIDENCE_MODULES[heading.moduleId].placement === "right" ? 5 : 0;
+    const cell = sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1);
+    const address = `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
+    cell.load("values");
+    pendingHeadings.push({ heading, cell, address });
+  }
+  if (pendingHeadings.length > 0) await context.sync();
+  for (const { cell, address } of pendingHeadings) {
+    const value = cell.values[0]?.[0];
+    const previousHeading = previousHeadings.get(address);
+    const isOwnedHeading = previousHeading && value === previousHeading.text;
+    if (value !== "" && value != null && !isOwnedHeading) {
+      throw new ExcelServiceError(`Heading cell ${address} contains user content.`);
+    }
+  }
+  return { plan, previousHeadingRanges, pendingHeadings };
+};
+
+const applyEvidenceReflow = ({
+  prepared,
+  shapeByName,
+  layoutImages,
+  metadataByName,
+  testTypeId,
+}: {
+  prepared: PreparedEvidenceReflow;
+  shapeByName: Map<string, Excel.Shape>;
+  layoutImages: readonly LayoutImage[];
+  metadataByName: Map<string, ManagedShapeMetadata>;
+  testTypeId: TestTypeId;
+}): void => {
+  for (const { heading, range } of prepared.previousHeadingRanges) {
+    if (range.values[0]?.[0] === heading.text) range.clear("All");
+  }
+  const headingByGroupAndModule = new Map<string, ManagedHeadingMetadata>();
+  for (const { heading, cell, address } of prepared.pendingHeadings) {
+    cell.formulas = [[toLiteralCellFormula(heading.text)]];
+    cell.format.fill.color = LAYOUT_CONFIG.headingFillColor;
+    cell.format.font.bold = true;
+    cell.format.font.color = LAYOUT_CONFIG.headingFontColor;
+    headingByGroupAndModule.set(`${heading.groupKey}|${heading.moduleId}`, { address, text: heading.text });
+  }
+  const imageByName = new Map(layoutImages.map((image) => [image.name, image]));
+  for (const placement of prepared.plan.images) {
+    const shape = shapeByName.get(placement.name);
+    const layoutImage = imageByName.get(placement.name);
+    const metadata = metadataByName.get(placement.name);
+    if (!shape || !layoutImage || !metadata) {
+      throw new ExcelServiceError(`Managed image "${placement.name}" is missing.`);
+    }
+    shape.lockAspectRatio = false;
+    setShapeRectangle(shape, placement);
+    shape.lockAspectRatio = true;
+    shape.altTextDescription = JSON.stringify({
+      version: MANAGED_METADATA_VERSION,
+      testTypeId,
+      caption: layoutImage.caption,
+      side: placement.moduleId === "GENERIC_SCREENSHOT" ? layoutImage.side ?? "left" : undefined,
+      genericGroupId: layoutImage.genericGroupId,
+      genericGroupHeader: layoutImage.genericGroupHeader,
+      heading: headingByGroupAndModule.get(`${placement.groupKey}|${placement.moduleId}`),
+    } satisfies ManagedShapeMetadata);
+  }
+};
+
 export const insertEvidence = async ({
   scenario,
   testTypeId,
@@ -514,6 +658,10 @@ export const insertEvidence = async ({
             .getItem(sourceShape.worksheetId)
             .shapes.getItem(sourceShape.shapeId)
         : undefined;
+      const { store: groupOrderStore, order: groupOrder } = await loadGroupOrder(
+        context,
+        arrangementScope(scenario, testTypeId),
+      );
 
       shapes.load("items/id,items/name,items/left,items/top,items/width,items/height,items/altTextDescription");
       leftRange.load("left,width");
@@ -535,14 +683,12 @@ export const insertEvidence = async ({
       const layoutImages: LayoutImage[] = [];
       const metadataByName = new Map<string, ManagedShapeMetadata>();
       const existingManagedBases: number[] = [];
-      const modulesWithImages = new Set<ModuleId>();
       for (const shape of shapes.items) {
         const parsed = parseImageShapeName(shape.name);
         if (parsed?.scenarioKey !== targetScenarioKey) continue;
         const metadata = parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId);
         if (metadata.testTypeId !== testTypeId) continue;
         metadataByName.set(shape.name, metadata);
-        modulesWithImages.add(parsed.moduleId);
         existingManagedBases.push(
           shape.top -
             (hasManagedHeading(parsed.moduleId, metadata)
@@ -578,9 +724,6 @@ export const insertEvidence = async ({
         side: moduleId === "GENERIC_SCREENSHOT" ? effectiveSide : undefined,
       });
       resolveGenericGroups(layoutImages, metadataByName, createdImageName);
-      modulesWithImages.add(moduleId);
-
-      const activeModules = [...modulesWithImages];
       const managedBottom = Math.max(
         0,
         ...shapes.items
@@ -596,22 +739,6 @@ export const insertEvidence = async ({
         usedBottom > managedBottom + LAYOUT_CONFIG.collisionGap
         ? usedBottom + LAYOUT_CONFIG.groupGap
         : 0;
-      const previousHeadings = new Map<string, ManagedHeadingMetadata>();
-      for (const metadata of metadataByName.values()) {
-        if (metadata.heading) previousHeadings.set(metadata.heading.address, metadata.heading);
-      }
-      const previousHeadingRanges = [...previousHeadings.values()].map((heading) => ({
-        heading,
-        range: sheet.getRange(heading.address),
-      }));
-      previousHeadingRanges.forEach(({ range }) => range.load("values"));
-      if (previousHeadingRanges.length > 0) await context.sync();
-      for (const { heading, range } of previousHeadingRanges) {
-        const value = range.values[0]?.[0];
-        if (value !== "" && value != null && value !== heading.text) {
-          throw new ExcelServiceError(`Heading cell ${heading.address} contains user content.`);
-        }
-      }
       const obstacles = shapes.items
         .filter((shape) => {
           if (sourceShape && shape.id === sourceShape.shapeId) return false;
@@ -628,50 +755,19 @@ export const insertEvidence = async ({
           : usedRange.isNullObject
             ? LAYOUT_CONFIG.groupGap
             : usedRange.top + usedRange.height + LAYOUT_CONFIG.groupGap;
-      const plan = buildLayout({
-        selectedModules: activeModules,
-        images: layoutImages,
+      const prepared = await prepareEvidenceReflow({
+        context,
+        sheet,
+        testTypeId,
+        layoutImages,
+        previousMetadata: metadataByName.values(),
+        groupOrder,
         anchors: anchorsFromRanges(leftRange, rightRange, fullRange),
         requestedBaseTop,
         obstacles,
       });
 
       const shapeByName = new Map(shapes.items.map((shape) => [shape.name, shape]));
-
-      const headingRows = new Map<number, number>();
-      const headingByGroupAndModule = new Map<string, ManagedHeadingMetadata>();
-      const pendingHeadings: Array<{
-        heading: (typeof plan.headings)[number];
-        cell: Excel.Range;
-        address: string;
-      }> = [];
-      for (const heading of plan.headings) {
-        let rowIndex = headingRows.get(heading.top);
-        if (rowIndex === undefined) {
-          rowIndex = await resolveRowAtTop(context, sheet, heading.top);
-          headingRows.set(heading.top, rowIndex);
-        }
-        const definition = EVIDENCE_MODULES[heading.moduleId];
-        const columnIndex = definition.placement === "right" ? 5 : 0;
-        const cell = sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1);
-        const address = `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
-        cell.load("values");
-        pendingHeadings.push({ heading, cell, address });
-      }
-      if (pendingHeadings.length > 0) await context.sync();
-
-      for (const { cell, address } of pendingHeadings) {
-        const value = cell.values[0]?.[0];
-        const previousHeading = previousHeadings.get(address);
-        const isOwnedHeading = previousHeading && value === previousHeading.text;
-        if (value !== "" && value != null && !isOwnedHeading) {
-          throw new ExcelServiceError(`Heading cell ${address} contains user content.`);
-        }
-      }
-
-      for (const { heading, range } of previousHeadingRanges) {
-        if (range.values[0]?.[0] === heading.text) range.clear("All");
-      }
 
       const newImage = sourcePicture ? sourcePicture.copyTo(sheet) : shapes.addImage(image.base64);
       newImage.name = createdImageName;
@@ -688,34 +784,18 @@ export const insertEvidence = async ({
         }
       }
 
-      for (const { heading, cell, address } of pendingHeadings) {
-        cell.formulas = [[toLiteralCellFormula(heading.text)]];
-        cell.format.fill.color = LAYOUT_CONFIG.headingFillColor;
-        cell.format.font.bold = true;
-        cell.format.font.color = LAYOUT_CONFIG.headingFontColor;
-        headingByGroupAndModule.set(`${heading.groupKey}|${heading.moduleId}`, {
-          address,
-          text: heading.text,
-        });
-      }
-
-      const imageByName = new Map(layoutImages.map((layoutImage) => [layoutImage.name, layoutImage]));
-      for (const placement of plan.images) {
-        const shape = shapeByName.get(placement.name);
-        if (!shape) throw new ExcelServiceError(`Managed image "${placement.name}" is missing.`);
-        shape.lockAspectRatio = false;
-        setShapeRectangle(shape, placement);
-        shape.lockAspectRatio = true;
-        const layoutImage = imageByName.get(placement.name);
-        shape.altTextDescription = JSON.stringify({
-          version: MANAGED_METADATA_VERSION,
-          testTypeId,
-          caption: layoutImage?.caption ?? "",
-          side: placement.moduleId === "GENERIC_SCREENSHOT" ? layoutImage?.side ?? "left" : undefined,
-          genericGroupId: layoutImage?.genericGroupId,
-          genericGroupHeader: layoutImage?.genericGroupHeader,
-          heading: headingByGroupAndModule.get(`${placement.groupKey}|${placement.moduleId}`),
-        } satisfies ManagedShapeMetadata);
+      applyEvidenceReflow({ prepared, shapeByName, layoutImages, metadataByName, testTypeId });
+      if (groupOrder.length > 0) {
+        saveGroupOrder(
+          context,
+          groupOrderStore,
+          arrangementScope(scenario, testTypeId),
+          getEvidenceGroups(
+            [...new Set(layoutImages.map((layoutImage) => layoutImage.moduleId))],
+            layoutImages,
+            groupOrder,
+          ).map((group) => group.key),
+        );
       }
 
       await context.sync();
@@ -748,6 +828,176 @@ export const insertEvidence = async ({
   }
 };
 
+export interface EvidenceArrangement {
+  groups: EvidenceGroupDescriptor[];
+  hasManualOrder: boolean;
+}
+
+export const readEvidenceArrangement = async (
+  scenario: ScenarioContext,
+  testTypeId: TestTypeId,
+): Promise<EvidenceArrangement> => {
+  if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
+  if (!isTestTypeId(testTypeId)) throw new ExcelServiceError("Invalid test type.");
+
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(scenario.worksheetName);
+    const shapes = sheet.shapes;
+    const { order } = await loadGroupOrder(context, arrangementScope(scenario, testTypeId));
+    shapes.load("items/name,items/width,items/height,items/altTextDescription");
+    await context.sync();
+
+    const targetScenarioKey = scenarioKey(scenario.scenarioId);
+    const layoutImages: LayoutImage[] = [];
+    const metadataByName = new Map<string, ManagedShapeMetadata>();
+    for (const shape of shapes.items) {
+      const parsed = parseImageShapeName(shape.name);
+      if (parsed?.scenarioKey !== targetScenarioKey) continue;
+      const metadata = parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId);
+      if (metadata.testTypeId !== testTypeId) continue;
+      metadataByName.set(shape.name, metadata);
+      layoutImages.push({
+        name: shape.name,
+        moduleId: parsed.moduleId,
+        sequence: parsed.sequence,
+        naturalWidth: shape.width,
+        naturalHeight: shape.height,
+        caption: metadata.caption,
+        side: metadata.side,
+        genericGroupId: metadata.genericGroupId,
+        genericGroupHeader: metadata.genericGroupHeader,
+      });
+    }
+    resolveGenericGroups(layoutImages, metadataByName);
+    return {
+      groups: getEvidenceGroups(
+        [...new Set(layoutImages.map((layoutImage) => layoutImage.moduleId))],
+        layoutImages,
+        order,
+      ),
+      hasManualOrder: order.length > 0,
+    };
+  }).catch((error: unknown) => {
+    throw new ExcelServiceError(toMessage(error));
+  });
+};
+
+const updateEvidenceArrangement = async (
+  scenario: ScenarioContext,
+  testTypeId: TestTypeId,
+  requestedOrder: readonly string[] | null,
+): Promise<EvidenceArrangement> => {
+  if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
+  if (!isTestTypeId(testTypeId)) throw new ExcelServiceError("Invalid test type.");
+  const normalizedRequest = requestedOrder === null ? null : normalizeGroupOrder(requestedOrder);
+  if (requestedOrder !== null && !normalizedRequest) {
+    throw new ExcelServiceError("Invalid evidence arrangement.");
+  }
+
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(scenario.worksheetName);
+    const shapes = sheet.shapes;
+    const leftRange = sheet.getRange(LAYOUT_CONFIG.leftAnchorRange);
+    const rightRange = sheet.getRange(LAYOUT_CONFIG.rightAnchorRange);
+    const fullRange = sheet.getRange(LAYOUT_CONFIG.fullAnchorRange);
+    const usedRange = sheet.getUsedRangeOrNullObject(true);
+    const scope = arrangementScope(scenario, testTypeId);
+    const { store } = await loadGroupOrder(context, scope);
+    shapes.load("items/name,items/left,items/top,items/width,items/height,items/altTextDescription");
+    leftRange.load("left,width");
+    rightRange.load("left,width");
+    fullRange.load("left,width");
+    usedRange.load("top,height");
+    await context.sync();
+
+    const targetScenarioKey = scenarioKey(scenario.scenarioId);
+    const candidates = shapes.items.flatMap((shape) => {
+      const parsed = parseImageShapeName(shape.name);
+      if (parsed?.scenarioKey !== targetScenarioKey) return [];
+      const metadata = parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId);
+      return metadata.testTypeId === testTypeId ? [{ shape, parsed, metadata }] : [];
+    });
+    if (candidates.length === 0) throw new ExcelServiceError("No evidence exists to arrange.");
+
+    const layoutImages: LayoutImage[] = candidates.map(({ shape, parsed, metadata }) => ({
+      name: shape.name,
+      moduleId: parsed.moduleId,
+      sequence: parsed.sequence,
+      naturalWidth: shape.width,
+      naturalHeight: shape.height,
+      caption: metadata.caption,
+      side: metadata.side,
+      genericGroupId: metadata.genericGroupId,
+      genericGroupHeader: metadata.genericGroupHeader,
+    }));
+    const metadataByName = new Map(candidates.map(({ shape, metadata }) => [shape.name, metadata]));
+    resolveGenericGroups(layoutImages, metadataByName);
+    const groupOrder = normalizedRequest ?? [];
+    const originalBaseTop = Math.max(0, Math.min(...candidates.map(({ shape, parsed, metadata }) =>
+      shape.top - (hasManagedHeading(parsed.moduleId, metadata)
+        ? LAYOUT_CONFIG.headingHeight + LAYOUT_CONFIG.headingGap
+        : 0))));
+    const managedBottom = Math.max(0, ...candidates.map(({ shape }) => shape.top + shape.height));
+    const usedBottom = usedRange.isNullObject ? 0 : usedRange.top + usedRange.height;
+    const userContentFloor = usedBottom > managedBottom + LAYOUT_CONFIG.collisionGap
+      ? usedBottom + LAYOUT_CONFIG.groupGap
+      : 0;
+    const obstacles = shapes.items
+      .filter((shape) => {
+        const parsed = parseImageShapeName(shape.name);
+        if (parsed?.scenarioKey === targetScenarioKey) {
+          return parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId).testTypeId !== testTypeId;
+        }
+        return !isManagedShapeName(shape.name);
+      })
+      .map((shape) => ({ left: shape.left, top: shape.top, width: shape.width, height: shape.height }));
+    const prepared = await prepareEvidenceReflow({
+      context,
+      sheet,
+      testTypeId,
+      layoutImages,
+      previousMetadata: metadataByName.values(),
+      groupOrder,
+      anchors: anchorsFromRanges(leftRange, rightRange, fullRange),
+      requestedBaseTop: Math.max(originalBaseTop, userContentFloor),
+      obstacles,
+    });
+    applyEvidenceReflow({
+      prepared,
+      shapeByName: new Map(candidates.map(({ shape }) => [shape.name, shape])),
+      layoutImages,
+      metadataByName,
+      testTypeId,
+    });
+    const groups = getEvidenceGroups(
+      [...new Set(layoutImages.map((layoutImage) => layoutImage.moduleId))],
+      layoutImages,
+      groupOrder,
+    );
+    saveGroupOrder(
+      context,
+      store,
+      scope,
+      normalizedRequest === null ? null : groups.map((group) => group.key),
+    );
+    await context.sync();
+    return { groups, hasManualOrder: normalizedRequest !== null };
+  }).catch((error: unknown) => {
+    throw new ExcelServiceError(toMessage(error));
+  });
+};
+
+export const applyEvidenceArrangement = async (
+  scenario: ScenarioContext,
+  testTypeId: TestTypeId,
+  order: readonly string[],
+): Promise<EvidenceArrangement> => updateEvidenceArrangement(scenario, testTypeId, order);
+
+export const resetEvidenceArrangement = async (
+  scenario: ScenarioContext,
+  testTypeId: TestTypeId,
+): Promise<EvidenceArrangement> => updateEvidenceArrangement(scenario, testTypeId, null);
+
 export const removeLastInsertedEvidence = async (
   scenario: ScenarioContext,
   testTypeId: TestTypeId,
@@ -761,6 +1011,10 @@ export const removeLastInsertedEvidence = async (
     const rightRange = sheet.getRange(LAYOUT_CONFIG.rightAnchorRange);
     const fullRange = sheet.getRange(LAYOUT_CONFIG.fullAnchorRange);
     const usedRange = sheet.getUsedRangeOrNullObject(true);
+    const { store: groupOrderStore, order: groupOrder } = await loadGroupOrder(
+      context,
+      arrangementScope(scenario, testTypeId),
+    );
     shapes.load("items/name,items/left,items/top,items/width,items/height,items/altTextDescription");
     leftRange.load("left,width");
     rightRange.load("left,width");
@@ -815,22 +1069,6 @@ export const removeLastInsertedEvidence = async (
     const userContentFloor = usedBottom > managedBottom + LAYOUT_CONFIG.collisionGap
       ? usedBottom + LAYOUT_CONFIG.groupGap
       : 0;
-    const previousHeadings = new Map<string, ManagedHeadingMetadata>();
-    for (const { metadata } of candidates) {
-      if (metadata?.heading) previousHeadings.set(metadata.heading.address, metadata.heading);
-    }
-    const previousHeadingRanges = [...previousHeadings.values()].map((heading) => ({
-      heading,
-      range: sheet.getRange(heading.address),
-    }));
-    previousHeadingRanges.forEach(({ range }) => range.load("values"));
-    if (previousHeadingRanges.length > 0) await context.sync();
-    for (const { heading, range } of previousHeadingRanges) {
-      const value = range.values[0]?.[0];
-      if (value !== "" && value != null && value !== heading.text) {
-        throw new ExcelServiceError(`Heading cell ${heading.address} contains user content.`);
-      }
-    }
     const obstacles = shapes.items
       .filter((shape) => {
         const parsed = parseImageShapeName(shape.name);
@@ -840,43 +1078,17 @@ export const removeLastInsertedEvidence = async (
         return !isManagedShapeName(shape.name);
       })
       .map((shape) => ({ left: shape.left, top: shape.top, width: shape.width, height: shape.height }));
-    const plan = buildLayout({
-      selectedModules: [...new Set(layoutImages.map((image) => image.moduleId))],
-      images: layoutImages,
+    const prepared = await prepareEvidenceReflow({
+      context,
+      sheet,
+      testTypeId,
+      layoutImages,
+      previousMetadata: candidates.flatMap(({ metadata }) => metadata ? [metadata] : []),
+      groupOrder,
       anchors: anchorsFromRanges(leftRange, rightRange, fullRange),
       requestedBaseTop: Math.max(originalBaseTop, userContentFloor),
       obstacles,
     });
-
-    const headingRows = new Map<number, number>();
-    const headingByGroupAndModule = new Map<string, ManagedHeadingMetadata>();
-    const pendingHeadings: Array<{
-      heading: (typeof plan.headings)[number];
-      cell: Excel.Range;
-      address: string;
-    }> = [];
-    for (const heading of plan.headings) {
-      let rowIndex = headingRows.get(heading.top);
-      if (rowIndex === undefined) {
-        rowIndex = await resolveRowAtTop(context, sheet, heading.top);
-        headingRows.set(heading.top, rowIndex);
-      }
-      const columnIndex = EVIDENCE_MODULES[heading.moduleId].placement === "right" ? 5 : 0;
-      const cell = sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1);
-      const address = `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
-      cell.load("values");
-      pendingHeadings.push({ heading, cell, address });
-    }
-    if (pendingHeadings.length > 0) await context.sync();
-
-    for (const { cell, address } of pendingHeadings) {
-      const value = cell.values[0]?.[0];
-      const previousHeading = previousHeadings.get(address);
-      const isOwnedHeading = previousHeading && value === previousHeading.text;
-      if (value !== "" && value != null && !isOwnedHeading) {
-        throw new ExcelServiceError(`Heading cell ${address} contains user content.`);
-      }
-    }
 
     const captionName = captionShapeName(
       scenario.scenarioId,
@@ -887,35 +1099,26 @@ export const removeLastInsertedEvidence = async (
     captionShape.load("name");
     await context.sync();
 
-    for (const { heading, range } of previousHeadingRanges) {
-      if (range.values[0]?.[0] === heading.text) range.clear("All");
-    }
     latest.shape.delete();
     if (!captionShape.isNullObject) captionShape.delete();
-
-    for (const { heading, cell, address } of pendingHeadings) {
-      cell.formulas = [[toLiteralCellFormula(heading.text)]];
-      cell.format.fill.color = LAYOUT_CONFIG.headingFillColor;
-      cell.format.font.bold = true;
-      cell.format.font.color = LAYOUT_CONFIG.headingFontColor;
-      headingByGroupAndModule.set(`${heading.groupKey}|${heading.moduleId}`, { address, text: heading.text });
-    }
-    const remainingByName = new Map(remaining.map((item) => [item.shape.name, item]));
-    for (const placement of plan.images) {
-      const item = remainingByName.get(placement.name);
-      if (!item) throw new ExcelServiceError(`Managed image "${placement.name}" is missing.`);
-      item.shape.lockAspectRatio = false;
-      setShapeRectangle(item.shape, placement);
-      item.shape.lockAspectRatio = true;
-      item.shape.altTextDescription = JSON.stringify({
-        version: MANAGED_METADATA_VERSION,
-        testTypeId,
-        caption: item.metadata.caption,
-        side: placement.moduleId === "GENERIC_SCREENSHOT" ? item.metadata.side ?? "left" : undefined,
-        genericGroupId: item.metadata.genericGroupId,
-        genericGroupHeader: item.metadata.genericGroupHeader,
-        heading: headingByGroupAndModule.get(`${placement.groupKey}|${placement.moduleId}`),
-      } satisfies ManagedShapeMetadata);
+    applyEvidenceReflow({
+      prepared,
+      shapeByName: new Map(remaining.map((item) => [item.shape.name, item.shape])),
+      layoutImages,
+      metadataByName: remainingMetadata,
+      testTypeId,
+    });
+    if (groupOrder.length > 0) {
+      saveGroupOrder(
+        context,
+        groupOrderStore,
+        arrangementScope(scenario, testTypeId),
+        getEvidenceGroups(
+          [...new Set(layoutImages.map((layoutImage) => layoutImage.moduleId))],
+          layoutImages,
+          groupOrder,
+        ).map((group) => group.key),
+      );
     }
     await context.sync();
     return latest.shape.name;

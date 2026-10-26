@@ -50,6 +50,7 @@ export interface LayoutPlan {
 export interface BuildLayoutInput {
   selectedModules: readonly ModuleId[];
   images: readonly LayoutImage[];
+  groupOrder?: readonly string[];
   anchors: LayoutAnchors;
   requestedBaseTop: number;
   obstacles: readonly Rectangle[];
@@ -73,6 +74,16 @@ interface EvidenceGroup {
   moduleIds: ModuleId[];
   rows: LayoutImage[][];
   genericHeading?: string;
+}
+
+export interface EvidenceGroupDescriptor {
+  key: string;
+  label: string;
+  moduleIds: ModuleId[];
+  imageCount: number;
+  firstSequence: number;
+  kind: "module" | "paired" | "generic";
+  showHeading: boolean;
 }
 
 interface SequencedImage {
@@ -228,6 +239,52 @@ const buildEvidenceGroups = (
   return groups;
 };
 
+const descriptorForGroup = (group: EvidenceGroup): EvidenceGroupDescriptor => {
+  const moduleIds = [...group.moduleIds];
+  const isGeneric = moduleIds[0] === "GENERIC_SCREENSHOT";
+  const images = group.rows.flat();
+  const labels = moduleIds.map((moduleId) => EVIDENCE_MODULES[moduleId].displayName);
+  return {
+    key: group.key,
+    label: isGeneric ? group.genericHeading || "Generic Screenshot" : labels.join(" + "),
+    moduleIds,
+    imageCount: images.length,
+    firstSequence: Math.min(...images.map((image) => image.sequence)),
+    kind: isGeneric ? "generic" : moduleIds.length > 1 ? "paired" : "module",
+    showHeading: isGeneric
+      ? group.genericHeading !== ""
+      : moduleIds.some((moduleId) => EVIDENCE_MODULES[moduleId].showHeading),
+  };
+};
+
+export const orderEvidenceGroups = <T extends { key: string }>(
+  groups: readonly T[],
+  groupOrder?: readonly string[],
+): T[] => {
+  if (!groupOrder?.length) return [...groups];
+  const byKey = new Map(groups.map((group) => [group.key, group]));
+  const ordered: T[] = [];
+  const seen = new Set<string>();
+  for (const key of groupOrder) {
+    if (seen.has(key)) continue;
+    const group = byKey.get(key);
+    if (!group) continue;
+    seen.add(key);
+    ordered.push(group);
+  }
+  for (const group of groups) {
+    if (!seen.has(group.key)) ordered.push(group);
+  }
+  return ordered;
+};
+
+export const getEvidenceGroups = (
+  selectedModules: readonly ModuleId[],
+  images: readonly LayoutImage[],
+  groupOrder?: readonly string[],
+): EvidenceGroupDescriptor[] =>
+  orderEvidenceGroups(buildEvidenceGroups(selectedModules, images), groupOrder).map(descriptorForGroup);
+
 export const rectanglesIntersect = (a: Rectangle, b: Rectangle, gap = 0): boolean =>
   a.left < b.left + b.width + gap &&
   a.left + a.width + gap > b.left &&
@@ -237,6 +294,7 @@ export const rectanglesIntersect = (a: Rectangle, b: Rectangle, gap = 0): boolea
 export const buildLayout = ({
   selectedModules,
   images,
+  groupOrder,
   anchors,
   requestedBaseTop,
   obstacles,
@@ -247,7 +305,7 @@ export const buildLayout = ({
   const placements: ImagePlacement[] = [];
   let cursorTop = baseTop;
 
-  for (const group of buildEvidenceGroups(selectedModules, images)) {
+  for (const group of orderEvidenceGroups(buildEvidenceGroups(selectedModules, images), groupOrder)) {
     const headingTop = cursorTop;
     const visibleHeadingModules = [...new Set(group.moduleIds)].filter((moduleId) => {
       if (moduleId === "GENERIC_SCREENSHOT") return group.genericHeading !== "";

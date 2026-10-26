@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import EvidenceArranger from "./components/EvidenceArranger";
 import { EVIDENCE_MODULES } from "./config/evidenceModules";
 import { IMAGE_LIMITS } from "./config/layoutProfiles";
 import { AVAILABLE_TEST_TYPES, TEST_TYPE_PROFILES } from "./config/testTypeProfiles";
 import {
+  applyEvidenceArrangement,
   getWorkbookPicturePreview,
   insertEvidence,
   isOfficeHostAvailable,
   readCurrentScenario,
+  readEvidenceArrangement,
   removeLastInsertedEvidence,
+  resetEvidenceArrangement,
   subscribeWorkbookPictureActivated,
   type WorkbookPictureSubscription,
   subscribeWorksheetActivated,
   updateScenarioStatus,
+  type EvidenceArrangement,
 } from "./services/excelService";
 import {
   clipboardContainsFiles,
@@ -40,6 +45,7 @@ import type {
 } from "./types/evidence";
 
 type Message = { kind: "success" | "error" | "info"; text: string } | null;
+type AppView = "insert" | "arrange";
 const HEADER_PERSIST_DELAY_MS = 400;
 
 const errorMessage = (error: unknown): string =>
@@ -65,6 +71,9 @@ const AppIcon = ({ name, className = "" }: { name: AppIconName; className?: stri
 };
 
 export default function App() {
+  const [view, setView] = useState<AppView>("insert");
+  const [arrangement, setArrangement] = useState<EvidenceArrangement | null>(null);
+  const [arrangerError, setArrangerError] = useState<string | undefined>();
   const [scenario, setScenario] = useState<ScenarioContext | null>(null);
   const [testTypeId, setTestTypeId] = useState<TestTypeId>("GENERAL");
   const [evidenceType, setEvidenceType] = useState<ModuleId>("GENERIC_SCREENSHOT");
@@ -97,6 +106,7 @@ export default function App() {
   const pasteGenerationRef = useRef(0);
   const pendingImageRef = useRef<PendingImage | null>(null);
   const pendingWorkbookPictureRef = useRef<WorkbookPictureReference | null>(null);
+  const viewRef = useRef<AppView>("insert");
 
   const selectedProfile = TEST_TYPE_PROFILES[testTypeId];
   const availableModules = selectedProfile.moduleIds
@@ -300,7 +310,7 @@ export default function App() {
 
         try {
           pictureSubscription = await subscribeWorkbookPictureActivated(async (picture) => {
-            if (disposed || !pictureSelectionArmedRef.current) return;
+            if (disposed || viewRef.current !== "insert" || !pictureSelectionArmedRef.current) return;
             if (workbookOperationRef.current) {
               setMessage({ kind: "error", text: "Wait for workbook operation to finish before selecting a picture." });
               return;
@@ -324,6 +334,12 @@ export default function App() {
         try {
           const removeHandler = await subscribeWorksheetActivated(async () => {
             if (disposed) return;
+            if (viewRef.current === "arrange") {
+              viewRef.current = "insert";
+              setView("insert");
+              setArrangement(null);
+              setArrangerError(undefined);
+            }
             if (workbookOperationRef.current) {
               deferredRefreshRef.current = true;
               return;
@@ -393,6 +409,7 @@ export default function App() {
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
+      if (viewRef.current !== "insert") return;
       if (!clipboardContainsFiles(event.clipboardData)) return;
       event.preventDefault();
       if (workbookOperationRef.current) {
@@ -499,9 +516,86 @@ export default function App() {
     }
   };
 
+  const handleOpenArranger = async () => {
+    const scenarioIntent = scenario;
+    if (!scenarioIntent || !beginWorkbookOperation()) return;
+    pictureSelectionArmedRef.current = false;
+    setPictureSelectionArmed(false);
+    pasteGenerationRef.current += 1;
+    setPasteBusy(false);
+    viewRef.current = "arrange";
+    setView("arrange");
+    setArrangement(null);
+    setArrangerError(undefined);
+    try {
+      setArrangement(await readEvidenceArrangement(scenarioIntent, testTypeId));
+    } catch (error) {
+      setArrangerError(errorMessage(error));
+    } finally {
+      finishWorkbookOperation();
+    }
+  };
+
+  const handleApplyArrangement = async (order: readonly string[]) => {
+    const scenarioIntent = scenario;
+    if (!scenarioIntent || !beginWorkbookOperation()) return;
+    setArrangerError(undefined);
+    try {
+      const result = await applyEvidenceArrangement(scenarioIntent, testTypeId, order);
+      setArrangement(result);
+      setMessage({ kind: "success", text: `Evidence arrangement applied to ${scenarioIntent.worksheetName}.` });
+      viewRef.current = "insert";
+      setView("insert");
+    } catch (error) {
+      setArrangerError(errorMessage(error));
+    } finally {
+      finishWorkbookOperation();
+    }
+  };
+
+  const handleResetArrangement = async () => {
+    const scenarioIntent = scenario;
+    if (!scenarioIntent || !beginWorkbookOperation()) return;
+    setArrangerError(undefined);
+    try {
+      const result = await resetEvidenceArrangement(scenarioIntent, testTypeId);
+      setArrangement(result);
+      setMessage({ kind: "success", text: "Evidence order reset to chronological." });
+    } catch (error) {
+      setArrangerError(errorMessage(error));
+    } finally {
+      finishWorkbookOperation();
+    }
+  };
+
+  const handleCloseArranger = () => {
+    viewRef.current = "insert";
+    setView("insert");
+    setArrangement(null);
+    setArrangerError(undefined);
+  };
+
   const busy = !preferencesLoaded || refreshing || operationBusy || pasteBusy;
   const statusClass = status === "PASS" ? "status-pass" : status === "FAIL" ? "status-fail" : "status-pending";
   const messageIcon: AppIconName = message?.kind === "success" ? "success" : message?.kind === "error" ? "error" : "info";
+
+  if (view === "arrange" && scenario) {
+    return (
+      <EvidenceArranger
+        key={arrangement?.groups.map((group) => group.key).join("|") ?? "loading"}
+        scenarioId={scenario.scenarioId}
+        testTypeName={selectedProfile.displayName}
+        groups={arrangement?.groups ?? []}
+        hasManualOrder={arrangement?.hasManualOrder ?? false}
+        busy={operationBusy}
+        loading={operationBusy && arrangement === null && !arrangerError}
+        error={arrangerError}
+        onApply={handleApplyArrangement}
+        onReset={handleResetArrangement}
+        onBack={handleCloseArranger}
+      />
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -574,6 +668,15 @@ export default function App() {
           </button>
         </aside>
       ) : null}
+
+      <button
+        className="button button-secondary arrange-evidence-button"
+        type="button"
+        disabled={busy || !scenario}
+        onClick={() => void handleOpenArranger()}
+      >
+        Arrange Evidence
+      </button>
 
       <section className="panel scenario-panel" aria-labelledby="scenario-heading">
         <h2 id="scenario-heading"><AppIcon name="scenario" />Test Scenario</h2>

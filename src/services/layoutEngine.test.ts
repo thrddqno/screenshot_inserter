@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLayout,
+  getEvidenceGroups,
   rectanglesIntersect,
   type ImagePlacement,
   type LayoutAnchors,
@@ -477,5 +478,47 @@ describe("buildLayout", () => {
     expect(plan.images.find((image) => image.name === "soa-left-6")?.top).toBe(
       plan.images.find((image) => image.name === "soa-right-7")?.top,
     );
+  });
+
+  it("applies manual group order while appending stale or omitted groups chronologically", () => {
+    const images: LayoutImage[] = [
+      { name: "generic", moduleId: "GENERIC_SCREENSHOT", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "Login", genericGroupId: "generic:1", genericGroupHeader: "Login" },
+      { name: "pdf", moduleId: "PDF_PAPER", sequence: 2, naturalWidth: 400, naturalHeight: 200, caption: "" },
+      { name: "soa", moduleId: "SOA_BATCH", sequence: 3, naturalWidth: 400, naturalHeight: 200, caption: "" },
+    ];
+    const naturalGroups = getEvidenceGroups(
+      ["GENERIC_SCREENSHOT", "PDF_PAPER", "SOA_BATCH"],
+      images,
+    );
+    const plan = buildLayout({
+      selectedModules: ["GENERIC_SCREENSHOT", "PDF_PAPER", "SOA_BATCH"],
+      images,
+      groupOrder: ["stale", naturalGroups[1].key, naturalGroups[1].key],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+
+    expect([...plan.images].sort((a, b) => a.top - b.top).map((item) => item.name)).toEqual([
+      "pdf",
+      "generic",
+      "soa",
+    ]);
+  });
+
+  it("describes paired and hidden-heading evidence as draggable groups", () => {
+    const groups = getEvidenceGroups(
+      ["PDF_PAPER", "AFP", "MCD"],
+      [
+        { name: "pdf", moduleId: "PDF_PAPER", sequence: 1, naturalWidth: 400, naturalHeight: 200, caption: "" },
+        { name: "afp", moduleId: "AFP", sequence: 2, naturalWidth: 400, naturalHeight: 200, caption: "" },
+        { name: "mcd", moduleId: "MCD", sequence: 3, naturalWidth: 400, naturalHeight: 200, caption: "" },
+      ],
+    );
+
+    expect(groups).toMatchObject([
+      { label: "PDF + AFP", kind: "paired", imageCount: 2, showHeading: true },
+      { label: "MCD", kind: "module", imageCount: 1, showHeading: false },
+    ]);
   });
 });

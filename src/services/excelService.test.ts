@@ -1,13 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenericSide, ModuleId, PendingImage, ScenarioContext } from "../types/evidence";
 import {
+  applyEvidenceArrangement,
   insertEvidence,
+  readEvidenceArrangement,
   removeLastInsertedEvidence,
+  resetEvidenceArrangement,
   subscribeWorkbookPictureActivated,
   subscribeWorksheetActivated,
   toLiteralCellFormula,
   updateScenarioStatus,
 } from "./excelService";
+import { EVIDENCE_GROUP_ORDERS_KEY } from "./evidenceArrangement";
 
 interface FakeShape {
   id: string;
@@ -149,13 +153,22 @@ const createHost = () => {
     getRangeByIndexes: vi.fn((rowIndex: number, columnIndex: number) => getCell(rowIndex, columnIndex)),
     getUsedRangeOrNullObject: vi.fn(() => usedRange),
   };
+  const settingsValues = new Map<string, unknown>();
+  const settings = {
+    getItemOrNullObject: vi.fn((key: string) => ({
+      get value() { return settingsValues.get(key); },
+      isNullObject: !settingsValues.has(key),
+      load: vi.fn(),
+    })),
+    add: vi.fn((key: string, value: unknown) => settingsValues.set(key, value)),
+  };
   const context = {
-    workbook: { worksheets: { getItem: vi.fn(() => sheet) } },
+    workbook: { worksheets: { getItem: vi.fn(() => sheet) }, settings },
     sync: vi.fn(async () => undefined),
   };
   vi.stubGlobal("Office", {});
   vi.stubGlobal("Excel", { run: (callback: (value: typeof context) => unknown) => callback(context) });
-  return { items, legacyShape, statusRange, semanticStatusRange, headingCells, addTextBox: shapes.addTextBox, sheet, usedRange };
+  return { items, legacyShape, statusRange, semanticStatusRange, headingCells, addTextBox: shapes.addTextBox, sheet, usedRange, settingsValues };
 };
 
 describe("Excel evidence service", () => {
@@ -991,6 +1004,55 @@ describe("Excel evidence service", () => {
     });
     const inserted = host.items.find((shape) => shape.name === name)!;
     expect(JSON.parse(inserted.altTextDescription ?? "{}").caption).toBe("");
+  });
+
+  it("applies, preserves, and resets scenario evidence order", async () => {
+    const host = createHost();
+    const genericName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "Login",
+    });
+    const pdfName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+    });
+    const initial = await readEvidenceArrangement(scenario, "SOA");
+    expect(initial.groups.map((group) => group.label)).toEqual(["Login", "PDF"]);
+    expect(initial.hasManualOrder).toBe(false);
+
+    const applied = await applyEvidenceArrangement(
+      scenario,
+      "SOA",
+      initial.groups.map((group) => group.key).reverse(),
+    );
+    expect(applied.groups.map((group) => group.label)).toEqual(["PDF", "Login"]);
+    expect(applied.hasManualOrder).toBe(true);
+    expect(host.items.find((shape) => shape.name === pdfName)!.top).toBeLessThan(
+      host.items.find((shape) => shape.name === genericName)!.top,
+    );
+
+    await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "INVOICING",
+      image,
+      caption: "",
+    });
+    const afterInsert = await readEvidenceArrangement(scenario, "SOA");
+    expect(afterInsert.groups.map((group) => group.label)).toEqual(["PDF", "Login", "Invoicing"]);
+
+    const reset = await resetEvidenceArrangement(scenario, "SOA");
+    expect(reset.groups.map((group) => group.label)).toEqual(["Login", "PDF", "Invoicing"]);
+    expect(reset.hasManualOrder).toBe(false);
+    expect(
+      (host.settingsValues.get(EVIDENCE_GROUP_ORDERS_KEY) as { entries: unknown[] }).entries,
+    ).toEqual([]);
   });
 
   it("escapes dynamic heading text before writing to Excel", () => {

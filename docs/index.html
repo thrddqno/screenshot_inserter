@@ -27,6 +27,7 @@
         <a href="#paste">Paste a screenshot</a>
         <a href="#workbook-picture">Use another workbook</a>
         <a href="#side-header">Side and Header</a>
+        <a href="#arrange">Arrange evidence</a>
         <a href="#mistakes">Fix mistakes</a>
         <a href="#problems">Common problems</a>
       </nav>
@@ -121,8 +122,45 @@
           </div>
         </section>
 
-        <section id="mistakes" class="guide-section">
+        <section id="arrange" class="guide-section">
           <p class="section-number">06</p>
+          <h2>Arrange existing evidence</h2>
+          <p>Use <strong>Arrange Evidence</strong> when screenshot sections need different worksheet order.</p>
+          <ol class="steps">
+            <li><span>Load scenario and select correct <strong>Test Type</strong>.</span></li>
+            <li><span>Select <strong>Arrange Evidence</strong>.</span></li>
+            <li><span>Drag section by blue handle, or use <strong>↑</strong> and <strong>↓</strong>.</span></li>
+            <li><span>Check position numbers, then select <strong>Apply Arrangement</strong>.</span></li>
+          </ol>
+          <div class="info-grid two-column">
+            <article>
+              <h3>Paired evidence</h3>
+              <p>Sections marked <strong>Paired</strong>, such as PDF + AFP, move together and cannot be separated.</p>
+            </article>
+            <article>
+              <h3>Return without applying</h3>
+              <p>Select <strong>Back</strong>. If order changed, choose whether to discard changes or cancel Back.</p>
+            </article>
+            <article>
+              <h3>Restore original order</h3>
+              <p>Select <strong>Reset to chronological</strong> to return sections to insertion order.</p>
+            </article>
+            <article>
+              <h3>Later screenshots</h3>
+              <p>Saved order remains after insert or remove. New sections appear at end until rearranged.</p>
+            </article>
+          </div>
+          <p class="note">Arrangement applies only to current worksheet, scenario, and Test Type.</p>
+          <figure>
+            <a href="./assets/docs/evidence-arranger.png" target="_blank" rel="noopener noreferrer">
+              <img src="/screenshot_inserter/assets/docs/evidence-arranger.png" alt="Arrange Evidence screen showing numbered draggable sections, paired labels, reset, and apply buttons" />
+            </a>
+            <figcaption>Move complete evidence sections, then apply worksheet order.</figcaption>
+          </figure>
+        </section>
+
+        <section id="mistakes" class="guide-section">
+          <p class="section-number">07</p>
           <h2>Fix mistakes</h2>
           <div class="info-grid two-column">
             <article>
@@ -138,7 +176,7 @@
         </section>
 
         <section id="problems" class="guide-section">
-          <p class="section-number">07</p>
+          <p class="section-number">08</p>
           <h2>Common problems</h2>
           <details>
             <summary>Scenario says “Not loaded”</summary>
