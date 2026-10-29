@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import EvidenceArranger from "./components/EvidenceArranger";
+import ExistingEvidenceConverter from "./components/ExistingEvidenceConverter";
 import { EVIDENCE_MODULES } from "./config/evidenceModules";
 import { IMAGE_LIMITS } from "./config/layoutProfiles";
 import { AVAILABLE_TEST_TYPES, TEST_TYPE_PROFILES } from "./config/testTypeProfiles";
@@ -36,6 +37,7 @@ import {
 } from "./services/updateService";
 import type {
   EvidenceStatus,
+  ExistingHeaderReference,
   GenericSide,
   ModuleId,
   PendingImage,
@@ -45,7 +47,7 @@ import type {
 } from "./types/evidence";
 
 type Message = { kind: "success" | "error" | "info"; text: string } | null;
-type AppView = "insert" | "arrange";
+type AppView = "insert" | "arrange" | "convert";
 const HEADER_PERSIST_DELAY_MS = 400;
 
 const errorMessage = (error: unknown): string =>
@@ -81,6 +83,10 @@ export default function App() {
   const [genericSide, setGenericSide] = useState<GenericSide>("left");
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const [pendingWorkbookPicture, setPendingWorkbookPicture] = useState<WorkbookPictureReference | null>(null);
+  const [pendingAdoptedHeader, setPendingAdoptedHeader] = useState<{
+    header: ExistingHeaderReference;
+    moduleId: ModuleId;
+  } | null>(null);
   const [pictureSelectionArmed, setPictureSelectionArmed] = useState(false);
   const [status, setStatus] = useState<EvidenceStatus>("PASS/FAIL");
   const [refreshing, setRefreshing] = useState(false);
@@ -134,6 +140,9 @@ export default function App() {
           if (!mountedRef.current || generation !== refreshGenerationRef.current) continue;
           if (result.kind === "loaded") {
             setScenario(result.scenario);
+            setPendingAdoptedHeader((current) =>
+              current?.header.worksheetName === result.scenario.worksheetName ? current : null,
+            );
             setStatus(
               result.scenario.status && result.scenario.status !== "UNCHANGED"
                 ? result.scenario.status
@@ -334,7 +343,7 @@ export default function App() {
         try {
           const removeHandler = await subscribeWorksheetActivated(async () => {
             if (disposed) return;
-            if (viewRef.current === "arrange") {
+            if (viewRef.current !== "insert") {
               viewRef.current = "insert";
               setView("insert");
               setArrangement(null);
@@ -466,11 +475,13 @@ export default function App() {
       caption: evidenceType === "GENERIC_SCREENSHOT" ? caption : "",
       side: evidenceType === "GENERIC_SCREENSHOT" ? genericSide : undefined,
       sourceShape: pendingWorkbookPictureRef.current ?? undefined,
+      adoptedHeader: pendingAdoptedHeader?.moduleId === evidenceType ? pendingAdoptedHeader.header : undefined,
     } as const;
     setMessage({ kind: "info", text: "Inserting screenshot…" });
     try {
       const name = await insertEvidence(insertIntent);
       if (pendingImageRef.current === imageIntent) replacePendingImage(null);
+      setPendingAdoptedHeader(null);
       setMessage({ kind: "success", text: `Inserted ${name} into ${scenarioIntent.worksheetName}.` });
     } catch (error) {
       setMessage({ kind: "error", text: errorMessage(error) });
@@ -575,6 +586,33 @@ export default function App() {
     setArrangerError(undefined);
   };
 
+  const handleOpenConverter = () => {
+    if (!scenario || busy) return;
+    pictureSelectionArmedRef.current = false;
+    setPictureSelectionArmed(false);
+    viewRef.current = "convert";
+    setView("convert");
+  };
+
+  const handleAdoptExistingHeader = (header: ExistingHeaderReference, moduleId: ModuleId) => {
+    setPendingAdoptedHeader({ header, moduleId });
+    setEvidenceType(moduleId);
+    if (moduleId === "GENERIC_SCREENSHOT") setCaption(header.text);
+    updateProfilePreferences({
+      evidenceType: moduleId,
+      ...(moduleId === "GENERIC_SCREENSHOT" ? { header: header.text } : {}),
+    });
+    viewRef.current = "insert";
+    setView("insert");
+    setMessage({ kind: "info", text: `Header ${header.address} will be used for the next insertion.` });
+  };
+
+  const handleConvertedExistingEvidence = (count: number) => {
+    viewRef.current = "insert";
+    setView("insert");
+    setMessage({ kind: "success", text: `Converted ${count} existing picture${count === 1 ? "" : "s"}.` });
+  };
+
   const busy = !preferencesLoaded || refreshing || operationBusy || pasteBusy;
   const statusClass = status === "PASS" ? "status-pass" : status === "FAIL" ? "status-fail" : "status-pending";
   const messageIcon: AppIconName = message?.kind === "success" ? "success" : message?.kind === "error" ? "error" : "info";
@@ -593,6 +631,23 @@ export default function App() {
         onApply={handleApplyArrangement}
         onReset={handleResetArrangement}
         onBack={handleCloseArranger}
+      />
+    );
+  }
+
+  if (view === "convert" && scenario) {
+    return (
+      <ExistingEvidenceConverter
+        scenario={scenario}
+        testTypeId={testTypeId}
+        testTypeName={selectedProfile.displayName}
+        moduleIds={selectedProfile.moduleIds}
+        onAdoptHeader={handleAdoptExistingHeader}
+        onConverted={handleConvertedExistingEvidence}
+        onBack={() => {
+          viewRef.current = "insert";
+          setView("insert");
+        }}
       />
     );
   }
@@ -616,6 +671,7 @@ export default function App() {
               };
               const nextForm = nextPreferences.profiles[nextTestTypeId];
               setTestTypeId(nextTestTypeId);
+              setPendingAdoptedHeader(null);
               setEvidenceType(nextForm.evidenceType);
               setCaption(nextForm.header);
               setGenericSide(nextForm.genericSide);
@@ -669,14 +725,24 @@ export default function App() {
         </aside>
       ) : null}
 
-      <button
-        className="button button-secondary arrange-evidence-button"
-        type="button"
-        disabled={busy || !scenario}
-        onClick={() => void handleOpenArranger()}
-      >
-        Arrange Evidence
-      </button>
+      <div className="evidence-tools">
+        <button
+          className="button button-secondary arrange-evidence-button"
+          type="button"
+          disabled={busy || !scenario}
+          onClick={() => void handleOpenArranger()}
+        >
+          Arrange Evidence
+        </button>
+        <button
+          className="button button-secondary"
+          type="button"
+          disabled={busy || !scenario}
+          onClick={handleOpenConverter}
+        >
+          Convert Existing
+        </button>
+      </div>
 
       <section className="panel scenario-panel" aria-labelledby="scenario-heading">
         <h2 id="scenario-heading"><AppIcon name="scenario" />Test Scenario</h2>
@@ -720,6 +786,7 @@ export default function App() {
             onChange={(event) => {
               const nextType = event.target.value as ModuleId;
               setEvidenceType(nextType);
+              if (pendingAdoptedHeader?.moduleId !== nextType) setPendingAdoptedHeader(null);
               updateProfilePreferences({ evidenceType: nextType });
             }}
           >
@@ -775,6 +842,12 @@ export default function App() {
               </div>
             </div>
           </>
+        ) : null}
+        {pendingAdoptedHeader ? (
+          <div className="adopted-header-notice" role="status">
+            <span>Using existing header {pendingAdoptedHeader.header.address} for the next insertion.</span>
+            <button className="button button-secondary" type="button" disabled={busy} onClick={() => setPendingAdoptedHeader(null)}>Cancel</button>
+          </div>
         ) : null}
         <div className={`paste-zone ${pendingImage ? "has-image" : ""}`} tabIndex={0} aria-label="Screenshot paste area">
           {pendingImage ? (

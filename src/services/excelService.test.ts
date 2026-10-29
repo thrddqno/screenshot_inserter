@@ -3,6 +3,7 @@ import type { GenericSide, ModuleId, PendingImage, ScenarioContext } from "../ty
 import {
   applyEvidenceArrangement,
   insertEvidence,
+  inferExistingHeaderModule,
   readEvidenceArrangement,
   removeLastInsertedEvidence,
   resetEvidenceArrangement,
@@ -78,6 +79,7 @@ const createHost = () => {
     top: number;
     load: ReturnType<typeof vi.fn>;
     clear: ReturnType<typeof vi.fn>;
+    unmerge: ReturnType<typeof vi.fn>;
     format: { fill: { color: string }; font: { bold: boolean; color: string } };
   }>();
   const shapes = {
@@ -126,6 +128,7 @@ const createHost = () => {
             cell!.formulas = [[""]];
             cell!.format = { fill: { color: "" }, font: { bold: false, color: "" } };
           }),
+          unmerge: vi.fn(),
           format: { fill: { color: "" }, font: { bold: false, color: "" } },
         };
         Object.defineProperty(cell, "formulas", {
@@ -174,6 +177,47 @@ const createHost = () => {
 describe("Excel evidence service", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.unstubAllGlobals());
+
+  it("infers fixed existing headers and falls back to Generic Screenshot", () => {
+    expect(inferExistingHeaderModule("PDF - Paperless", ["PDF_PAPERLESS", "GENERIC_SCREENSHOT"]))
+      .toBe("PDF_PAPERLESS");
+    expect(inferExistingHeaderModule("My manual header", ["PDF_PAPER", "GENERIC_SCREENSHOT"]))
+      .toBe("GENERIC_SCREENSHOT");
+  });
+
+  it("adopts an existing worksheet header for the next inserted picture", async () => {
+    const host = createHost();
+    const source = host.sheet.getRangeByIndexes(20, 0) as ReturnType<typeof host.sheet.getRangeByIndexes> & {
+      values: string[][];
+      text?: string[][];
+    };
+    source.values = [["PDF"]];
+    source.text = [["PDF"]];
+
+    const name = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+      adoptedHeader: {
+        worksheetId: "sheet-1",
+        worksheetName: scenario.worksheetName,
+        address: "TS4.1.1!A21",
+        rowIndex: 20,
+        columnIndex: 0,
+        columnCount: 1,
+        text: "PDF",
+        top: 300,
+        height: 15,
+      },
+    });
+
+    expect(source.unmerge).toHaveBeenCalledOnce();
+    expect(source.clear).toHaveBeenCalledWith("All");
+    const inserted = host.items.find((shape) => shape.name === name)!;
+    expect(JSON.parse(inserted.altTextDescription ?? "{}").heading.text).toBe("PDF");
+  });
 
   it("registers and removes worksheet activation handler with same identity", async () => {
     const add = vi.fn();
@@ -816,23 +860,28 @@ describe("Excel evidence service", () => {
     expect(blank.top).toBe(b.top);
   });
 
-  it("aborts Header regrouping before mutation when managed heading was edited", async () => {
+  it("preserves an edited managed Header and moves the regrouped evidence to a safe row", async () => {
     const host = createHost();
     await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "GENERIC_SCREENSHOT", image, caption: "A" });
     await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "GENERIC_SCREENSHOT", image, caption: "B" });
     const heading = [...host.headingCells.values()].find((cell) => cell.values[0][0] === "A")!;
+    const originalAddress = JSON.parse(
+      host.items.find((shape) => shape.name.endsWith("__001"))?.altTextDescription ?? "{}",
+    ).heading.address as string;
     heading.values = [["User A"]];
 
-    await expect(insertEvidence({
+    const insertedName = await insertEvidence({
       scenario,
       testTypeId: "SOA",
       moduleId: "GENERIC_SCREENSHOT",
       image,
       caption: "A",
-    })).rejects.toThrow("contains user content");
+    });
 
     expect(heading.values).toEqual([["User A"]]);
-    expect(host.items.filter((shape) => !shape.deleted && shape.name.startsWith("EV__"))).toHaveLength(2);
+    expect(host.items.filter((shape) => !shape.deleted && shape.name.startsWith("EV__"))).toHaveLength(3);
+    const inserted = host.items.find((shape) => shape.name === insertedName)!;
+    expect(JSON.parse(inserted.altTextDescription ?? "{}").heading.address).not.toBe(originalAddress);
   });
 
   it("keeps duplicate legacy Header occurrences separate and targets most recent", async () => {
@@ -932,7 +981,7 @@ describe("Excel evidence service", () => {
     expect(first.top).toBe(originalTop);
   });
 
-  it("refuses to overwrite user content in a managed heading cell", async () => {
+  it("preserves user content in a managed heading cell and uses the next safe row", async () => {
     const host = createHost();
     await insertEvidence({
       scenario,
@@ -944,25 +993,105 @@ describe("Excel evidence service", () => {
     const heading = [...host.headingCells.values()].find(
       (cell) => cell.values[0][0] === "Invoicing",
     )!;
+    const originalAddress = JSON.parse(
+      host.items.find((shape) => shape.name.endsWith("__001"))?.altTextDescription ?? "{}",
+    ).heading.address as string;
     heading.values = [["User-owned note"]];
     heading.format = { fill: { color: "#FFFF00" }, font: { bold: false, color: "#123456" } };
 
-    await expect(
-      insertEvidence({
-        scenario,
-        testTypeId: "SOA",
-        moduleId: "INVOICING",
-        image,
-        caption: "",
-      }),
-    ).rejects.toThrow("contains user content");
+    const insertedName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "INVOICING",
+      image,
+      caption: "",
+    });
 
     expect(heading.values).toEqual([["User-owned note"]]);
     expect(heading.format).toEqual({
       fill: { color: "#FFFF00" },
       font: { bold: false, color: "#123456" },
     });
-    expect(host.items.filter((shape) => shape.name.startsWith("EV__TS4_1_1__INVOICING__"))).toHaveLength(1);
+    expect(host.items.filter((shape) => shape.name.startsWith("EV__TS4_1_1__INVOICING__"))).toHaveLength(2);
+    const inserted = host.items.find((shape) => shape.name === insertedName)!;
+    expect(JSON.parse(inserted.altTextDescription ?? "{}").heading.address).not.toBe(originalAddress);
+  });
+
+  it("skips a header row when another cell in its slot contains a formula", async () => {
+    const host = createHost();
+    const firstName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+    });
+    const first = host.items.find((shape) => shape.name === firstName)!;
+    const originalAddress = JSON.parse(first.altTextDescription ?? "{}").heading.address as string;
+    const rowIndex = Number(originalAddress.slice(1)) - 1;
+    const userCell = host.sheet.getRangeByIndexes(rowIndex, 1) as ReturnType<typeof host.sheet.getRangeByIndexes> & {
+      values: string[][];
+      formulas: string[][];
+    };
+    userCell.formulas = [["=IF(TRUE,\"\",\"\")"]];
+    userCell.values = [[""]];
+
+    const secondName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+    });
+
+    expect(userCell.formulas).toEqual([["=IF(TRUE,\"\",\"\")"]]);
+    const second = host.items.find((shape) => shape.name === secondName)!;
+    expect(JSON.parse(second.altTextDescription ?? "{}").heading.address).not.toBe(originalAddress);
+  });
+
+  it("moves a paired group together when either header slot row contains user data", async () => {
+    const host = createHost();
+    const pdfName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+    });
+    const afpName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "AFP",
+      image,
+      caption: "",
+    });
+    const originalAddress = JSON.parse(
+      host.items.find((shape) => shape.name === pdfName)?.altTextDescription ?? "{}",
+    ).heading.address as string;
+    const rowIndex = Number(originalAddress.slice(1)) - 1;
+    const userCell = host.sheet.getRangeByIndexes(rowIndex, 2) as ReturnType<typeof host.sheet.getRangeByIndexes> & {
+      values: string[][];
+    };
+    userCell.values = [["Keep me"]];
+
+    const secondPdfName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+    });
+
+    const pdf = host.items.find((shape) => shape.name === pdfName)!;
+    const afp = host.items.find((shape) => shape.name === afpName)!;
+    const secondPdf = host.items.find((shape) => shape.name === secondPdfName)!;
+    const pdfMetadata = JSON.parse(pdf.altTextDescription ?? "{}");
+    const afpMetadata = JSON.parse(afp.altTextDescription ?? "{}");
+    expect(userCell.values).toEqual([["Keep me"]]);
+    expect(pdfMetadata.heading.address.slice(1)).toBe(afpMetadata.heading.address.slice(1));
+    expect(pdfMetadata.heading.address).not.toBe(originalAddress);
+    expect(pdf.top).toBe(afp.top);
+    expect(secondPdf.top).toBeGreaterThan(pdf.top);
   });
 
   it("removes dynamic heading when its last Generic Screenshot is removed", async () => {

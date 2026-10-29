@@ -72,3 +72,28 @@ export interface WorkbookPictureReference {
   shapeId: string;
   name: string;
 }
+
+export interface ExistingHeaderReference {
+  worksheetId: string;
+  worksheetName: string;
+  address: string;
+  rowIndex: number;
+  columnIndex: 0 | 5;
+  columnCount: 1 | 4;
+  text: string;
+  top: number;
+  height: number;
+}
+
+export interface ExistingEvidencePictureCandidate extends WorkbookPictureReference {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  side: GenericSide;
+}
+
+export interface ExistingEvidenceScan {
+  header: ExistingHeaderReference;
+  pictures: ExistingEvidencePictureCandidate[];
+}

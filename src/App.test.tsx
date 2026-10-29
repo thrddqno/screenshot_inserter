@@ -45,6 +45,7 @@ describe("task pane", () => {
     expect(screen.getByRole("button", { name: "Use pasted Excel picture" })).toHaveClass("button-secondary");
     expect(screen.getByRole("button", { name: "Insert" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove Last Inserted" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Convert Existing" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Remove pending screenshot" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refresh test scenario" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/");
@@ -184,6 +185,46 @@ describe("task pane", () => {
     expect(await screen.findByText("Evidence arrangement applied to TS6.1.")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Insert Evidence" })).toBeVisible();
     expect(apply).toHaveBeenCalledWith(scenario, "SOA", ["PDF_PAPER+AFP:2", "generic:1"]);
+  });
+
+  it("adopts a selected existing header for one later insertion", async () => {
+    const scenario = {
+      worksheetName: "TS6.1",
+      scenarioId: "TS6.1",
+      condition: "Condition",
+      expectedResult: "Result",
+    };
+    vi.spyOn(excelService, "isOfficeHostAvailable").mockReturnValue(true);
+    vi.spyOn(workbookPreferences, "readWorkbookPreferences").mockResolvedValue({
+      preferences: preferences("SOA"),
+    });
+    vi.spyOn(workbookPreferences, "writeWorkbookPreferences").mockResolvedValue(undefined);
+    vi.spyOn(excelService, "subscribeWorksheetActivated").mockResolvedValue(async () => undefined);
+    vi.spyOn(excelService, "readCurrentScenario").mockResolvedValue({ kind: "loaded", scenario });
+    vi.spyOn(excelService, "readSelectedExistingHeader").mockResolvedValue({
+      worksheetId: "sheet-1",
+      worksheetName: scenario.worksheetName,
+      address: "TS6.1!A20:D20",
+      rowIndex: 19,
+      columnIndex: 0,
+      columnCount: 4,
+      text: "PDF",
+      top: 285,
+      height: 15,
+    });
+
+    render(<App />);
+    await screen.findByText("TS6.1");
+    fireEvent.click(screen.getByRole("button", { name: "Convert Existing" }));
+    expect(await screen.findByRole("heading", { name: "Convert Existing Evidence" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Conversion"), { target: { value: "header" } });
+    fireEvent.click(screen.getByRole("button", { name: "Read selected header" }));
+    await screen.findByText("TS6.1!A20:D20");
+    fireEvent.click(screen.getByRole("button", { name: "Use for next insertion" }));
+
+    expect(await screen.findByRole("heading", { name: "Insert Evidence" })).toBeVisible();
+    expect(screen.getByLabelText("Evidence Type")).toHaveValue("PDF_PAPER");
+    expect(screen.getByText(/Using existing header TS6.1!A20:D20/)).toBeVisible();
   });
 
   it("hydrates saved form choices before scenario Status loads", async () => {

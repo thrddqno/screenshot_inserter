@@ -27,6 +27,7 @@
         <a href="#paste">Paste a screenshot</a>
         <a href="#workbook-picture">Use another workbook</a>
         <a href="#side-header">Side and Header</a>
+        <a href="#convert">Convert existing evidence</a>
         <a href="#arrange">Arrange evidence</a>
         <a href="#mistakes">Fix mistakes</a>
         <a href="#problems">Common problems</a>
@@ -122,8 +123,31 @@
           </div>
         </section>
 
-        <section id="arrange" class="guide-section">
+        <section id="convert" class="guide-section">
           <p class="section-number">06</p>
+          <h2>Convert existing evidence</h2>
+          <p>Use <strong>Convert Existing</strong> for headers and Excel picture objects that were already on the scenario sheet.</p>
+          <ol class="steps">
+            <li><span>Select one header cell or one header row in <strong>A:D</strong> or <strong>F:I</strong>.</span></li>
+            <li><span>Select <strong>Convert Existing</strong>, then choose <strong>Header and pictures</strong>.</span></li>
+            <li><span>Select <strong>Read selected header</strong> and verify the detected evidence type.</span></li>
+            <li><span>Check the picture list, then select <strong>Convert Pictures</strong>.</span></li>
+          </ol>
+          <div class="info-grid two-column">
+            <article>
+              <h3>Header only</h3>
+              <p>Choose <strong>Header for next insertion</strong> to use the selected header once with the next screenshot.</p>
+            </article>
+            <article>
+              <h3>User cells</h3>
+              <p>If a target header row contains a value or formula, the evidence moves down to the next empty slot and leaves the cell untouched.</p>
+            </article>
+          </div>
+          <p class="note">Conversion changes only the pictures checked in the review list. Formatting alone does not block an otherwise empty header row.</p>
+        </section>
+
+        <section id="arrange" class="guide-section">
+          <p class="section-number">07</p>
           <h2>Arrange existing evidence</h2>
           <p>Use <strong>Arrange Evidence</strong> when screenshot sections need different worksheet order.</p>
           <ol class="steps">
@@ -160,7 +184,7 @@
         </section>
 
         <section id="mistakes" class="guide-section">
-          <p class="section-number">07</p>
+          <p class="section-number">08</p>
           <h2>Fix mistakes</h2>
           <div class="info-grid two-column">
             <article>
@@ -176,7 +200,7 @@
         </section>
 
         <section id="problems" class="guide-section">
-          <p class="section-number">08</p>
+          <p class="section-number">09</p>
           <h2>Common problems</h2>
           <details>
             <summary>Scenario says “Not loaded”</summary>

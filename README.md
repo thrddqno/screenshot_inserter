@@ -99,6 +99,10 @@ Changing selected row while already on `Summary` does not activate another works
 
 Images are appended below all existing non-add-in shapes. Existing `Picture N` objects are not changed unless the tester explicitly selects a temporary pasted object through **Use pasted Excel picture**; that temporary object is removed only after its managed evidence copy is inserted. If user cell content is added below an existing managed image block, the next insertion moves the managed block below that content.
 
+Use **Convert Existing** to bring worksheet evidence that predates the add-in under management. Select one cell or one row in `A:D` or `F:I`, then choose either **Header and pictures** to review and convert detected Excel picture objects or **Header for next insertion** to adopt only the header once. The review defaults to the evidence type inferred from the header and allows a manual override. Only checked pictures are converted.
+
+Managed heading placement treats values and formulas as user-owned content, including formulas that display an empty string. If a planned heading row is occupied anywhere in its `A:D` or `F:I` slot, the entire evidence group and all later groups move to the next available row. Edited managed headings remain untouched. Cell formatting by itself does not make a row occupied.
+
 Test Type, Status, and each profile's last Evidence Type, Generic Side, and Header are stored in Excel workbook settings. A workbook without saved choices defaults to `General` and `PASS/FAIL` Status. Changing Test Type restores that profile's choices while keeping pending screenshot and Status. Scenario refresh preserves Evidence Type, Side, and Header; recognized worksheet Status takes precedence. General and SOA evidence are isolated: one profile does not reflow or remove another profile's images.
 
 ### Test Scenario discovery

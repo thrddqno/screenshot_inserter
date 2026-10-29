@@ -3,6 +3,9 @@ import { LAYOUT_CONFIG } from "../config/layoutProfiles";
 import { isTestTypeId, TEST_TYPE_PROFILES } from "../config/testTypeProfiles";
 import type {
   EvidenceStatus,
+  ExistingEvidencePictureCandidate,
+  ExistingEvidenceScan,
+  ExistingHeaderReference,
   GenericSide,
   ModuleId,
   PendingImage,
@@ -370,6 +373,179 @@ export const getWorkbookPicturePreview = async (
   }
 };
 
+const rangeCellHasContent = (value: unknown, formula: unknown): boolean =>
+  (value !== "" && value != null) || (formula !== "" && formula != null);
+
+export const inferExistingHeaderModule = (
+  headerText: string,
+  moduleIds: readonly ModuleId[],
+): ModuleId => {
+  const normalized = headerText.trim().toLocaleLowerCase();
+  return moduleIds.find((moduleId) => {
+    const module = EVIDENCE_MODULES[moduleId];
+    return module.headingText.toLocaleLowerCase() === normalized ||
+      module.displayName.toLocaleLowerCase() === normalized;
+  }) ?? (moduleIds.includes("GENERIC_SCREENSHOT") ? "GENERIC_SCREENSHOT" : moduleIds[0]);
+};
+
+export const readSelectedExistingHeader = async (
+  scenario: ScenarioContext,
+): Promise<ExistingHeaderReference> => {
+  if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
+  return Excel.run(async (context) => {
+    const activeSheet = context.workbook.worksheets.getActiveWorksheet();
+    const selected = context.workbook.getSelectedRange();
+    activeSheet.load("id,name");
+    selected.load("address,rowIndex,columnIndex,rowCount,columnCount,text,values,formulas,top,height");
+    await context.sync();
+    if (activeSheet.name !== scenario.worksheetName) {
+      throw new ExcelServiceError(`Select a header on ${scenario.worksheetName}.`);
+    }
+    const validColumn = selected.columnIndex === 0 || selected.columnIndex === 5;
+    const validWidth = selected.columnCount === 1 || selected.columnCount === 4;
+    if (!validColumn || !validWidth || selected.rowCount !== 1) {
+      throw new ExcelServiceError("Select one header cell or one header row in A:D or F:I.");
+    }
+    const populated = selected.text[0]
+      .map((text, index) => ({ text: text.trim(), index }))
+      .filter(({ text, index }) => text !== "" || rangeCellHasContent(selected.values[0]?.[index], selected.formulas[0]?.[index]));
+    if (populated.length !== 1 || populated[0].text === "") {
+      throw new ExcelServiceError("The selected header must contain exactly one visible text value.");
+    }
+    if (populated[0].text.length > CAPTION_MAXIMUM_LENGTH) {
+      throw new ExcelServiceError(`Header exceeds ${CAPTION_MAXIMUM_LENGTH} characters.`);
+    }
+    return {
+      worksheetId: activeSheet.id,
+      worksheetName: activeSheet.name,
+      address: selected.address,
+      rowIndex: selected.rowIndex,
+      columnIndex: selected.columnIndex as 0 | 5,
+      columnCount: selected.columnCount as 1 | 4,
+      text: populated[0].text,
+      top: selected.top,
+      height: selected.height,
+    };
+  }).catch((error: unknown) => {
+    throw new ExcelServiceError(toMessage(error));
+  });
+};
+
+export const scanExistingEvidence = async (
+  header: ExistingHeaderReference,
+  moduleId: ModuleId,
+): Promise<ExistingEvidenceScan> => {
+  if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
+  const module = EVIDENCE_MODULES[moduleId];
+  const expectedColumn = module.placement === "right" ? 5 : 0;
+  if (header.columnIndex !== expectedColumn) {
+    throw new ExcelServiceError(
+      `${module.displayName} headers must be selected from ${expectedColumn === 5 ? "F:I" : "A:D"}.`,
+    );
+  }
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(header.worksheetId);
+    const shapes = sheet.shapes;
+    const usedRange = sheet.getUsedRangeOrNullObject(true);
+    const slot = sheet.getRange(
+      moduleId === "GENERIC_SCREENSHOT"
+        ? "A1:I1"
+        : module.placement === "right"
+          ? LAYOUT_CONFIG.rightAnchorRange
+          : LAYOUT_CONFIG.leftAnchorRange,
+    );
+    const rightSlot = sheet.getRange(LAYOUT_CONFIG.rightAnchorRange);
+    const source = sheet.getRangeByIndexes(header.rowIndex, header.columnIndex, 1, header.columnCount);
+    shapes.load("items/id,items/name,items/type,items/left,items/top,items/width,items/height");
+    usedRange.load("rowIndex,rowCount");
+    slot.load("left,width");
+    rightSlot.load("left");
+    source.load("text");
+    await context.sync();
+    const sourceText = source.text[0]?.map((value) => value.trim()).find(Boolean) ?? "";
+    if (sourceText !== header.text) throw new ExcelServiceError("The selected header changed. Select it again.");
+
+    let boundaryTop = Number.POSITIVE_INFINITY;
+    if (!usedRange.isNullObject) {
+      const firstRow = header.rowIndex + 1;
+      const finalRow = usedRange.rowIndex + usedRange.rowCount;
+      if (firstRow < finalRow) {
+        const anchors = sheet.getRangeByIndexes(firstRow, 0, finalRow - firstRow, 6);
+        anchors.load("values,formulas");
+        await context.sync();
+        const boundaryOffset = anchors.values.findIndex((row, offset) =>
+          [0, 5].some((columnIndex) => rangeCellHasContent(row[columnIndex], anchors.formulas[offset]?.[columnIndex])),
+        );
+        if (boundaryOffset >= 0) {
+          const boundary = sheet.getRangeByIndexes(firstRow + boundaryOffset, 0, 1, 1);
+          boundary.load("top");
+          await context.sync();
+          boundaryTop = boundary.top;
+        }
+      }
+    }
+    const slotLeft = slot.left;
+    const slotRight = slot.left + slot.width;
+    const pictures: ExistingEvidencePictureCandidate[] = shapes.items
+      .filter((shape) => {
+        if (shape.type !== "Image" || isManagedShapeName(shape.name)) return false;
+        const center = shape.left + shape.width / 2;
+        return shape.top >= header.top + header.height && shape.top < boundaryTop && center >= slotLeft && center <= slotRight;
+      })
+      .sort((first, second) => first.top - second.top || first.left - second.left)
+      .map((shape) => ({
+        worksheetId: header.worksheetId,
+        shapeId: shape.id,
+        name: shape.name,
+        left: shape.left,
+        top: shape.top,
+        width: shape.width,
+        height: shape.height,
+        side: shape.left + shape.width / 2 >= rightSlot.left ? "right" : "left",
+      }));
+    return { header, pictures };
+  }).catch((error: unknown) => {
+    throw new ExcelServiceError(toMessage(error));
+  });
+};
+
+export interface ConvertExistingEvidenceInput {
+  scenario: ScenarioContext;
+  testTypeId: TestTypeId;
+  moduleId: ModuleId;
+  header: ExistingHeaderReference;
+  pictures: readonly ExistingEvidencePictureCandidate[];
+}
+
+export const convertExistingEvidence = async ({
+  scenario,
+  testTypeId,
+  moduleId,
+  header,
+  pictures,
+}: ConvertExistingEvidenceInput): Promise<string[]> => {
+  if (pictures.length === 0) throw new ExcelServiceError("Select at least one picture to convert.");
+  const names: string[] = [];
+  for (const [index, picture] of [...pictures].sort((a, b) => a.top - b.top || a.left - b.left).entries()) {
+    const image = await getWorkbookPicturePreview(picture);
+    try {
+      names.push(await insertEvidence({
+        scenario,
+        testTypeId,
+        moduleId,
+        image,
+        caption: moduleId === "GENERIC_SCREENSHOT" ? header.text : "",
+        side: moduleId === "GENERIC_SCREENSHOT" ? picture.side : undefined,
+        sourceShape: picture,
+        adoptedHeader: index === 0 ? header : undefined,
+      }));
+    } finally {
+      URL.revokeObjectURL(image.previewUrl);
+    }
+  }
+  return names;
+};
+
 export const readCurrentScenario = async (): Promise<ScenarioReadResult> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Open this page inside an Excel task pane.");
 
@@ -440,7 +616,7 @@ export const updateScenarioStatus = async (
   });
 };
 
-interface InsertEvidenceInput {
+export interface InsertEvidenceInput {
   scenario: ScenarioContext;
   testTypeId: TestTypeId;
   moduleId: ModuleId;
@@ -448,6 +624,7 @@ interface InsertEvidenceInput {
   caption: string;
   side?: GenericSide;
   sourceShape?: WorkbookPictureReference;
+  adoptedHeader?: ExistingHeaderReference;
 }
 
 const setShapeRectangle = (shape: Excel.Shape, rectangle: Rectangle): void => {
@@ -500,7 +677,30 @@ interface PreparedEvidenceReflow {
   plan: ReturnType<typeof buildLayout>;
   previousHeadingRanges: Array<{ heading: ManagedHeadingMetadata; range: Excel.Range }>;
   pendingHeadings: PendingHeading[];
+  adoptedHeaderRange?: Excel.Range;
 }
+
+const cellHasContent = (cell: Excel.Range): boolean => {
+  const value = cell.values[0]?.[0];
+  const formula = cell.formulas[0]?.[0];
+  return (value !== "" && value != null) || (formula !== "" && formula != null);
+};
+
+const shiftPlanGroups = (
+  plan: ReturnType<typeof buildLayout>,
+  orderedGroupKeys: readonly string[],
+  firstGroupIndex: number,
+  delta: number,
+): void => {
+  if (delta === 0) return;
+  const shifted = new Set(orderedGroupKeys.slice(firstGroupIndex));
+  for (const heading of plan.headings) {
+    if (shifted.has(heading.groupKey)) heading.top += delta;
+  }
+  for (const image of plan.images) {
+    if (shifted.has(image.groupKey)) image.top += delta;
+  }
+};
 
 const prepareEvidenceReflow = async ({
   context,
@@ -512,6 +712,7 @@ const prepareEvidenceReflow = async ({
   requestedBaseTop,
   obstacles,
   groupOrder,
+  adoptedHeader,
 }: {
   context: Excel.RequestContext;
   sheet: Excel.Worksheet;
@@ -522,6 +723,7 @@ const prepareEvidenceReflow = async ({
   requestedBaseTop: number;
   obstacles: readonly Rectangle[];
   groupOrder?: readonly string[];
+  adoptedHeader?: ExistingHeaderReference;
 }): Promise<PreparedEvidenceReflow> => {
   const previousHeadings = new Map<string, ManagedHeadingMetadata>();
   for (const metadata of previousMetadata) {
@@ -531,13 +733,18 @@ const prepareEvidenceReflow = async ({
     heading,
     range: sheet.getRange(heading.address),
   }));
-  previousHeadingRanges.forEach(({ range }) => range.load("values"));
+  previousHeadingRanges.forEach(({ range }) => range.load("values,formulas"));
   if (previousHeadingRanges.length > 0) await context.sync();
+
+  const reusableHeadings = new Map<string, ManagedHeadingMetadata>();
   for (const { heading, range } of previousHeadingRanges) {
-    const value = range.values[0]?.[0];
-    if (value !== "" && value != null && value !== heading.text) {
-      throw new ExcelServiceError(`Heading cell ${heading.address} contains user content.`);
-    }
+    if (range.values[0]?.[0] === heading.text) reusableHeadings.set(heading.address, heading);
+  }
+  if (adoptedHeader) {
+    reusableHeadings.set(
+      `${adoptedHeader.columnIndex === 5 ? "F" : "A"}${adoptedHeader.rowIndex + 1}`,
+      { address: adoptedHeader.address, text: adoptedHeader.text },
+    );
   }
 
   const plan = buildLayout({
@@ -548,6 +755,54 @@ const prepareEvidenceReflow = async ({
     requestedBaseTop,
     obstacles,
   });
+  const groupTop = new Map<string, number>();
+  for (const heading of plan.headings) {
+    groupTop.set(heading.groupKey, Math.min(groupTop.get(heading.groupKey) ?? Number.POSITIVE_INFINITY, heading.top));
+  }
+  for (const image of plan.images) {
+    groupTop.set(image.groupKey, Math.min(groupTop.get(image.groupKey) ?? Number.POSITIVE_INFINITY, image.top));
+  }
+  const orderedGroupKeys = [...groupTop.entries()]
+    .sort((first, second) => first[1] - second[1])
+    .map(([groupKey]) => groupKey);
+
+  for (let groupIndex = 0; groupIndex < orderedGroupKeys.length; groupIndex += 1) {
+    const groupKey = orderedGroupKeys[groupIndex];
+    const headings = plan.headings.filter((heading) => heading.groupKey === groupKey);
+    if (headings.length === 0) continue;
+    const targetTop = Math.min(...headings.map((heading) => heading.top));
+    let rowIndex = await resolveRowAtTop(context, sheet, targetTop);
+    const requiredColumns = new Set<number>();
+    for (const heading of headings) {
+      const start = EVIDENCE_MODULES[heading.moduleId].placement === "right" ? 5 : 0;
+      for (let columnIndex = start; columnIndex < start + 4; columnIndex += 1) requiredColumns.add(columnIndex);
+    }
+
+    while (rowIndex < 1_048_576) {
+      const cells = [...requiredColumns].map((columnIndex) => ({
+        columnIndex,
+        range: sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1),
+      }));
+      cells.forEach(({ range }) => range.load("values,formulas"));
+      await context.sync();
+      const rowIsAvailable = cells.every(({ columnIndex, range }) => {
+        if (!cellHasContent(range)) return true;
+        if (columnIndex !== 0 && columnIndex !== 5) return false;
+        const address = `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
+        return reusableHeadings.get(address)?.text === range.values[0]?.[0];
+      });
+      if (rowIsAvailable) break;
+      rowIndex += 1;
+    }
+    if (rowIndex >= 1_048_576) {
+      throw new ExcelServiceError("No empty worksheet row is available for the evidence header.");
+    }
+    const rowAnchor = sheet.getRangeByIndexes(rowIndex, 0, 1, 1);
+    rowAnchor.load("top");
+    await context.sync();
+    shiftPlanGroups(plan, orderedGroupKeys, groupIndex, rowAnchor.top - targetTop);
+  }
+
   const headingRows = new Map<number, number>();
   const pendingHeadings: PendingHeading[] = [];
   for (const heading of plan.headings) {
@@ -559,19 +814,31 @@ const prepareEvidenceReflow = async ({
     const columnIndex = EVIDENCE_MODULES[heading.moduleId].placement === "right" ? 5 : 0;
     const cell = sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1);
     const address = `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
-    cell.load("values");
+    cell.load("values,formulas");
     pendingHeadings.push({ heading, cell, address });
   }
   if (pendingHeadings.length > 0) await context.sync();
   for (const { cell, address } of pendingHeadings) {
     const value = cell.values[0]?.[0];
-    const previousHeading = previousHeadings.get(address);
+    const previousHeading = reusableHeadings.get(address);
     const isOwnedHeading = previousHeading && value === previousHeading.text;
-    if (value !== "" && value != null && !isOwnedHeading) {
+    if (cellHasContent(cell) && !isOwnedHeading) {
       throw new ExcelServiceError(`Heading cell ${address} contains user content.`);
     }
   }
-  return { plan, previousHeadingRanges, pendingHeadings };
+  return {
+    plan,
+    previousHeadingRanges,
+    pendingHeadings,
+    adoptedHeaderRange: adoptedHeader
+      ? sheet.getRangeByIndexes(
+          adoptedHeader.rowIndex,
+          adoptedHeader.columnIndex,
+          1,
+          adoptedHeader.columnCount,
+        )
+      : undefined,
+  };
 };
 
 const applyEvidenceReflow = ({
@@ -587,6 +854,10 @@ const applyEvidenceReflow = ({
   metadataByName: Map<string, ManagedShapeMetadata>;
   testTypeId: TestTypeId;
 }): void => {
+  if (prepared.adoptedHeaderRange) {
+    prepared.adoptedHeaderRange.unmerge();
+    prepared.adoptedHeaderRange.clear("All");
+  }
   for (const { heading, range } of prepared.previousHeadingRanges) {
     if (range.values[0]?.[0] === heading.text) range.clear("All");
   }
@@ -629,6 +900,7 @@ export const insertEvidence = async ({
   caption,
   side,
   sourceShape,
+  adoptedHeader,
 }: InsertEvidenceInput): Promise<string> => {
   if (!isOfficeHostAvailable()) throw new ExcelServiceError("Excel host is unavailable.");
   if (!isTestTypeId(testTypeId) || !TEST_TYPE_PROFILES[testTypeId].moduleIds.includes(moduleId)) {
@@ -669,10 +941,33 @@ export const insertEvidence = async ({
       fullRange.load("left,width");
       usedRange.load("top,height");
       sourcePicture?.load("type,width,height");
+      const adoptedHeaderRange = adoptedHeader
+        ? sheet.getRangeByIndexes(
+            adoptedHeader.rowIndex,
+            adoptedHeader.columnIndex,
+            1,
+            adoptedHeader.columnCount,
+          )
+        : undefined;
+      adoptedHeaderRange?.load("text,values,formulas");
       await context.sync();
 
       if (sourcePicture && sourcePicture.type !== "Image") {
         throw new ExcelServiceError("Selected Excel shape is not a picture.");
+      }
+      if (adoptedHeader) {
+        const expectedColumn = EVIDENCE_MODULES[moduleId].placement === "right" ? 5 : 0;
+        const currentText = adoptedHeaderRange?.text
+          .flat()
+          .map((value) => value.trim())
+          .find(Boolean) ?? "";
+        if (
+          adoptedHeader.worksheetName !== scenario.worksheetName ||
+          adoptedHeader.columnIndex !== expectedColumn ||
+          currentText !== adoptedHeader.text
+        ) {
+          throw new ExcelServiceError("The selected existing header changed or no longer matches this evidence type.");
+        }
       }
 
       const targetScenarioKey = scenarioKey(scenario.scenarioId);
@@ -724,6 +1019,38 @@ export const insertEvidence = async ({
         side: moduleId === "GENERIC_SCREENSHOT" ? effectiveSide : undefined,
       });
       resolveGenericGroups(layoutImages, metadataByName, createdImageName);
+      let effectiveGroupOrder = groupOrder;
+      if (adoptedHeader) {
+        const probe = buildLayout({
+          selectedModules: [...new Set(layoutImages.map((layoutImage) => layoutImage.moduleId))],
+          images: layoutImages,
+          groupOrder,
+          anchors: anchorsFromRanges(leftRange, rightRange, fullRange),
+          requestedBaseTop: 0,
+          obstacles: [],
+        });
+        const groupByImage = new Map(probe.images.map((placement) => [placement.name, placement.groupKey]));
+        const createdGroupKey = groupByImage.get(createdImageName);
+        const existingTopByGroup = new Map<string, number>();
+        for (const shape of shapes.items) {
+          const groupKey = groupByImage.get(shape.name);
+          if (!groupKey) continue;
+          existingTopByGroup.set(groupKey, Math.min(existingTopByGroup.get(groupKey) ?? Number.POSITIVE_INFINITY, shape.top));
+        }
+        const groups = getEvidenceGroups(
+          [...new Set(layoutImages.map((layoutImage) => layoutImage.moduleId))],
+          layoutImages,
+          groupOrder,
+        );
+        const originalPosition = new Map(groups.map((group, index) => [group.key, index]));
+        effectiveGroupOrder = groups
+          .map((group) => group.key)
+          .sort((first, second) => {
+            const firstTop = existingTopByGroup.get(first) ?? (first === createdGroupKey ? adoptedHeader.top : Number.POSITIVE_INFINITY);
+            const secondTop = existingTopByGroup.get(second) ?? (second === createdGroupKey ? adoptedHeader.top : Number.POSITIVE_INFINITY);
+            return firstTop - secondTop || (originalPosition.get(first) ?? 0) - (originalPosition.get(second) ?? 0);
+          });
+      }
       const managedBottom = Math.max(
         0,
         ...shapes.items
@@ -761,10 +1088,11 @@ export const insertEvidence = async ({
         testTypeId,
         layoutImages,
         previousMetadata: metadataByName.values(),
-        groupOrder,
+        groupOrder: effectiveGroupOrder,
         anchors: anchorsFromRanges(leftRange, rightRange, fullRange),
         requestedBaseTop,
         obstacles,
+        adoptedHeader,
       });
 
       const shapeByName = new Map(shapes.items.map((shape) => [shape.name, shape]));
@@ -785,7 +1113,7 @@ export const insertEvidence = async ({
       }
 
       applyEvidenceReflow({ prepared, shapeByName, layoutImages, metadataByName, testTypeId });
-      if (groupOrder.length > 0) {
+      if (effectiveGroupOrder.length > 0 && (groupOrder.length > 0 || Boolean(adoptedHeader))) {
         saveGroupOrder(
           context,
           groupOrderStore,
@@ -793,7 +1121,7 @@ export const insertEvidence = async ({
           getEvidenceGroups(
             [...new Set(layoutImages.map((layoutImage) => layoutImage.moduleId))],
             layoutImages,
-            groupOrder,
+            effectiveGroupOrder,
           ).map((group) => group.key),
         );
       }
