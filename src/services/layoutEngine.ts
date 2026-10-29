@@ -158,6 +158,7 @@ const buildEvidenceGroups = (
 
   const groups: EvidenceGroup[] = [];
   const stableGenericGroups = new Map<string, EvidenceGroup>();
+  const pairedGroups = new Map<string, EvidenceGroup>();
   let previousTimelineSignature: string | undefined;
   for (let index = 0; index < sequenced.length; index += 1) {
     const first = sequenced[index];
@@ -181,11 +182,17 @@ const buildEvidenceGroups = (
       }
     }
     const previous = groups.at(-1);
+    const isPairedFamily = !isGeneric && Boolean(EVIDENCE_MODULES[first.image.moduleId].pairingPartner);
+    const matchingGroup = isPairedFamily
+      ? pairedGroups.get(signature)
+      : !isGeneric && previousTimelineSignature === signature && previous?.signature === signature
+        ? previous
+        : undefined;
 
-    if (!isGeneric && previousTimelineSignature === signature && previous?.signature === signature) {
-      previous.rows.push(row);
+    if (matchingGroup) {
+      matchingGroup.rows.push(row);
       for (const moduleId of moduleIds) {
-        if (!previous.moduleIds.includes(moduleId)) previous.moduleIds.push(moduleId);
+        if (!matchingGroup.moduleIds.includes(moduleId)) matchingGroup.moduleIds.push(moduleId);
       }
       previousTimelineSignature = signature;
       continue;
@@ -200,6 +207,7 @@ const buildEvidenceGroups = (
     };
     groups.push(group);
     if (isGeneric && first.genericGroupId) stableGenericGroups.set(signature, group);
+    if (isPairedFamily) pairedGroups.set(signature, group);
     previousTimelineSignature = signature;
   }
 

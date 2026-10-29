@@ -576,20 +576,43 @@ describe("Excel evidence service", () => {
     expect(pdf2.top).toBeGreaterThan(Math.max(pdf1.top + pdf1.height, afp.top + afp.height));
   });
 
-  it("preserves chronological geometry across separate mixed-evidence insertions", async () => {
+  it("aligns PDF and Paperless partner headers across separate insertion operations", async () => {
+    const host = createHost();
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "PDF_PAPER", image, caption: "" });
+    const originalPdfTop = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPER__001")!.top;
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "PDF_PAPERLESS", image, caption: "" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "AFP", image, caption: "" });
+    await insertEvidence({ scenario, testTypeId: "SOA", moduleId: "AFP_PAPERLESS", image, caption: "" });
+
+    const pdf = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPER__001")!;
+    const pdfPaperless = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPERLESS__002")!;
+    const afp = host.items.find((shape) => shape.name === "EV__TS4_1_1__AFP__003")!;
+    const afpPaperless = host.items.find((shape) => shape.name === "EV__TS4_1_1__AFP_PAPERLESS__004")!;
+    const activeHeadings = [...host.headingCells.values()].filter((cell) => cell.values[0][0] !== "");
+    const headingByText = new Map(activeHeadings.map((cell) => [cell.values[0][0], cell]));
+
+    expect(activeHeadings).toHaveLength(4);
+    expect(pdf.top).toBe(originalPdfTop);
+    expect(pdf.top).toBe(afp.top);
+    expect(pdfPaperless.top).toBe(afpPaperless.top);
+    expect(pdfPaperless.top).toBeGreaterThan(Math.max(pdf.top + pdf.height, afp.top + afp.height));
+    expect(headingByText.get("PDF")?.top).toBe(headingByText.get("AFP")?.top);
+    expect(headingByText.get("PDF - Paperless")?.top).toBe(headingByText.get("AFP - Paperless")?.top);
+  });
+
+  it("pairs a later partner ahead of intervening evidence across insertions", async () => {
     const host = createHost();
     const modules: ModuleId[] = ["GENERIC_SCREENSHOT", "PDF_PAPER", "SOA_BATCH", "AFP"];
-    const previousRectangles = new Map<string, { left: number; top: number; width: number; height: number }>();
 
-    for (const moduleId of modules) {
+    for (const [moduleIndex, moduleId] of modules.entries()) {
       const name = await insertEvidence({
         scenario,
         testTypeId: "SOA",
         moduleId,
         image: {
           ...image,
-          width: image.width + previousRectangles.size * 125,
-          height: image.height - previousRectangles.size * 90,
+          width: image.width + moduleIndex * 125,
+          height: image.height - moduleIndex * 90,
         },
         caption: moduleId === "GENERIC_SCREENSHOT" ? "First" : "",
       });
@@ -601,29 +624,22 @@ describe("Excel evidence service", () => {
           .sort((a, b) => a.top - b.top || a.left - b.left)
           .map((shape) => shape.name),
       ).toEqual(
-        modules
-          .slice(0, managed.length)
-          .map((insertedModule, index) => `EV__TS4_1_1__${insertedModule}__${String(index + 1).padStart(3, "0")}`),
+        (moduleId === "AFP"
+          ? ["GENERIC_SCREENSHOT", "PDF_PAPER", "AFP", "SOA_BATCH"] as ModuleId[]
+          : modules.slice(0, managed.length)
+        ).map((visualModule) => {
+          const sequence = modules.indexOf(visualModule) + 1;
+          return `EV__TS4_1_1__${visualModule}__${String(sequence).padStart(3, "0")}`;
+        }),
       );
-
-      for (const shape of managed) {
-        const previous = previousRectangles.get(shape.name);
-        if (previous) expect(shape).toMatchObject(previous);
-      }
-      const inserted = managed.find((shape) => shape.name === name)!;
-      previousRectangles.set(name, {
-        left: inserted.left,
-        top: inserted.top,
-        width: inserted.width,
-        height: inserted.height,
-      });
+      expect(managed.some((shape) => shape.name === name)).toBe(true);
     }
 
     const pdf = host.items.find((shape) => shape.name === "EV__TS4_1_1__PDF_PAPER__002")!;
     const soa = host.items.find((shape) => shape.name === "EV__TS4_1_1__SOA_BATCH__003")!;
     const afp = host.items.find((shape) => shape.name === "EV__TS4_1_1__AFP__004")!;
-    expect(soa.top).toBeGreaterThan(pdf.top + pdf.height);
-    expect(afp.top).toBeGreaterThan(soa.top + soa.height);
+    expect(pdf.top).toBe(afp.top);
+    expect(soa.top).toBeGreaterThan(Math.max(pdf.top + pdf.height, afp.top + afp.height));
   });
 
   it("reflows remaining evidence without moving stable chronological groups", async () => {

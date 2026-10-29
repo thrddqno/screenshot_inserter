@@ -136,6 +136,13 @@ New evidence headings use worksheet cells, not shapes:
 - MCD and Statement Duplicate intentionally have no heading
 - Header input appears only for Generic Screenshot
 
+Configured evidence partners share one two-column group:
+
+- PDF pairs with AFP; PDF - Paperless pairs with AFP - Paperless; SOA Batch pairs with SOA Batch - Paperless
+- Partner headings and screenshots align by ordinal row even when another evidence family was inserted between them
+- The family remains at its first insertion position, so partner alignment takes priority over strict insertion order for paired evidence
+- Extra screenshots remain under the shared headers on their configured side
+
 Generic Screenshot groups use exact Header matching:
 
 - Same exact text shares one gray heading cell

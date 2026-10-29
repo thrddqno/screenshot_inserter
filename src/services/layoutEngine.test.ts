@@ -116,6 +116,97 @@ describe("buildLayout", () => {
     expect(pdfPaperless.top).toBeGreaterThan(Math.max(pdf.top + pdf.height, afp.top + afp.height));
   });
 
+  it("aligns PDF partner families when right-side evidence is inserted later", () => {
+    const plan = buildLayout({
+      selectedModules: ["PDF_PAPER", "PDF_PAPERLESS", "AFP", "AFP_PAPERLESS"],
+      images: [
+        { name: "pdf", moduleId: "PDF_PAPER", sequence: 1, naturalWidth: 800, naturalHeight: 1000, caption: "" },
+        { name: "pdf-paperless", moduleId: "PDF_PAPERLESS", sequence: 2, naturalWidth: 700, naturalHeight: 700, caption: "" },
+        { name: "afp", moduleId: "AFP", sequence: 3, naturalWidth: 500, naturalHeight: 600, caption: "" },
+        { name: "afp-paperless", moduleId: "AFP_PAPERLESS", sequence: 4, naturalWidth: 900, naturalHeight: 1200, caption: "" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+
+    const pdf = plan.images.find((image) => image.name === "pdf")!;
+    const afp = plan.images.find((image) => image.name === "afp")!;
+    const pdfPaperless = plan.images.find((image) => image.name === "pdf-paperless")!;
+    const afpPaperless = plan.images.find((image) => image.name === "afp-paperless")!;
+    const headingByModule = new Map(plan.headings.map((heading) => [heading.moduleId, heading]));
+
+    expect(pdf.top).toBe(afp.top);
+    expect(pdf.groupKey).toBe(afp.groupKey);
+    expect(pdfPaperless.top).toBe(afpPaperless.top);
+    expect(pdfPaperless.groupKey).toBe(afpPaperless.groupKey);
+    expect(pdfPaperless.top).toBeGreaterThan(Math.max(pdf.top + pdf.height, afp.top + afp.height));
+    expect(headingByModule.get("PDF_PAPER")?.top).toBe(headingByModule.get("AFP")?.top);
+    expect(headingByModule.get("PDF_PAPERLESS")?.top).toBe(headingByModule.get("AFP_PAPERLESS")?.top);
+    expect(plan.headings).toHaveLength(4);
+    for (let first = 0; first < plan.images.length; first += 1) {
+      for (let second = first + 1; second < plan.images.length; second += 1) {
+        expect(rectanglesIntersect(plan.images[first], plan.images[second])).toBe(false);
+      }
+    }
+  });
+
+  it.each([
+    ["PDF_PAPER", "AFP"],
+    ["AFP", "PDF_PAPER"],
+    ["PDF_PAPERLESS", "AFP_PAPERLESS"],
+    ["AFP_PAPERLESS", "PDF_PAPERLESS"],
+    ["SOA_BATCH", "SOA_BATCH_PAPERLESS"],
+    ["SOA_BATCH_PAPERLESS", "SOA_BATCH"],
+  ] as const)("aligns nonconsecutive paired evidence %s and %s", (firstModule, secondModule) => {
+    const plan = buildLayout({
+      selectedModules: [firstModule, "INVOICING", secondModule],
+      images: [
+        { name: "first", moduleId: firstModule, sequence: 1, naturalWidth: 700, naturalHeight: 900, caption: "" },
+        { name: "intervening", moduleId: "INVOICING", sequence: 2, naturalWidth: 800, naturalHeight: 400, caption: "" },
+        { name: "second", moduleId: secondModule, sequence: 3, naturalWidth: 500, naturalHeight: 600, caption: "" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+
+    const first = plan.images.find((image) => image.name === "first")!;
+    const second = plan.images.find((image) => image.name === "second")!;
+    const intervening = plan.images.find((image) => image.name === "intervening")!;
+    expect(first.top).toBe(second.top);
+    expect(first.groupKey).toBe(second.groupKey);
+    expect(intervening.top).toBeGreaterThan(Math.max(first.top + first.height, second.top + second.height));
+  });
+
+  it("pairs repeated nonconsecutive evidence by ordinal row with mixed dimensions", () => {
+    const plan = buildLayout({
+      selectedModules: ["PDF_PAPER", "AFP", "INVOICING"],
+      images: [
+        { name: "pdf-1", moduleId: "PDF_PAPER", sequence: 1, naturalWidth: 300, naturalHeight: 1200, caption: "" },
+        { name: "intervening", moduleId: "INVOICING", sequence: 2, naturalWidth: 1000, naturalHeight: 300, caption: "" },
+        { name: "pdf-2", moduleId: "PDF_PAPER", sequence: 3, naturalWidth: 900, naturalHeight: 450, caption: "" },
+        { name: "afp-1", moduleId: "AFP", sequence: 4, naturalWidth: 800, naturalHeight: 500, caption: "" },
+        { name: "afp-2", moduleId: "AFP", sequence: 5, naturalWidth: 400, naturalHeight: 1000, caption: "" },
+      ],
+      anchors,
+      requestedBaseTop: 0,
+      obstacles: [],
+    });
+
+    const pdf1 = plan.images.find((image) => image.name === "pdf-1")!;
+    const pdf2 = plan.images.find((image) => image.name === "pdf-2")!;
+    const afp1 = plan.images.find((image) => image.name === "afp-1")!;
+    const afp2 = plan.images.find((image) => image.name === "afp-2")!;
+    const intervening = plan.images.find((image) => image.name === "intervening")!;
+    expect(pdf1.top).toBe(afp1.top);
+    expect(pdf2.top).toBe(afp2.top);
+    expect(pdf2.top).toBeGreaterThan(Math.max(pdf1.top + pdf1.height, afp1.top + afp1.height));
+    expect(intervening.top).toBeGreaterThan(Math.max(pdf2.top + pdf2.height, afp2.top + afp2.height));
+    expect(plan.headings.filter((heading) => heading.moduleId === "PDF_PAPER")).toHaveLength(1);
+    expect(plan.headings.filter((heading) => heading.moduleId === "AFP")).toHaveLength(1);
+  });
+
   it("preserves right placement when only right-side module exists", () => {
     const plan = buildLayout({
       selectedModules: ["AFP"],
@@ -256,7 +347,7 @@ describe("buildLayout", () => {
     expect(b.top).toBeGreaterThan(a2.top + a2.height);
   });
 
-  it("does not merge non-Generic occurrences separated by a regrouped Generic image", () => {
+  it("keeps configured paired-family occurrences under one header across regrouped Generic evidence", () => {
     const plan = buildLayout({
       selectedModules: ["GENERIC_SCREENSHOT", "PDF_PAPER"],
       images: [
@@ -269,7 +360,11 @@ describe("buildLayout", () => {
       requestedBaseTop: 0,
       obstacles: [],
     });
-    expect(plan.headings.filter((heading) => heading.text === "PDF")).toHaveLength(2);
+    const pdf1 = plan.images.find((image) => image.name === "pdf-1")!;
+    const pdf2 = plan.images.find((image) => image.name === "pdf-2")!;
+    expect(plan.headings.filter((heading) => heading.text === "PDF")).toHaveLength(1);
+    expect(pdf1.groupKey).toBe(pdf2.groupKey);
+    expect(pdf2.top).toBeGreaterThan(pdf1.top + pdf1.height);
   });
 
   it("pairs consecutive Generic left then right screenshots", () => {
@@ -427,7 +522,6 @@ describe("buildLayout", () => {
 
   it.each([
     ["Generic -> PDF -> AFP -> SOA", ["GENERIC_SCREENSHOT", "PDF_PAPER", "AFP", "SOA_BATCH"]],
-    ["Generic -> PDF -> SOA -> AFP", ["GENERIC_SCREENSHOT", "PDF_PAPER", "SOA_BATCH", "AFP"]],
     ["SOA -> Generic -> PDF -> AFP", ["SOA_BATCH", "GENERIC_SCREENSHOT", "PDF_PAPER", "AFP"]],
     ["PDF -> AFP -> Generic", ["PDF_PAPER", "AFP", "GENERIC_SCREENSHOT"]],
   ] as const)("keeps %s in chronological worksheet order", (_label, moduleIds) => {
