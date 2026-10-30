@@ -77,6 +77,7 @@ const createHost = () => {
     values: string[][];
     formulas: string[][];
     top: number;
+    height: number;
     load: ReturnType<typeof vi.fn>;
     clear: ReturnType<typeof vi.fn>;
     unmerge: ReturnType<typeof vi.fn>;
@@ -110,6 +111,10 @@ const createHost = () => {
   const usedRange = {
     top: 0,
     height: 300,
+    rowIndex: 0,
+    columnIndex: 0,
+    columnCount: 9,
+    get rowCount() { return Math.max(1, Math.ceil(this.height / 15)); },
     isNullObject: false,
     load: vi.fn(),
   };
@@ -122,6 +127,7 @@ const createHost = () => {
           values: [[""]],
           formulas,
           top: rowIndex * 15,
+          height: 15,
           load: vi.fn(),
           clear: vi.fn(() => {
             cell!.values = [[""]];
@@ -148,12 +154,53 @@ const createHost = () => {
     tabColor: "#123456",
     shapes,
     getRange: vi.fn((address: string) => {
+      if (address === "A:I") return { getUsedRangeOrNullObject: vi.fn(() => usedRange) };
       if (ranges[address]) return ranges[address];
       const match = /^([AF])(\d+)$/.exec(address);
       if (!match) return undefined;
       return getCell(Number(match[2]) - 1, match[1] === "F" ? 5 : 0);
     }),
-    getRangeByIndexes: vi.fn((rowIndex: number, columnIndex: number) => getCell(rowIndex, columnIndex)),
+    getRangeByIndexes: vi.fn((rowIndex: number, columnIndex: number, rowCount = 1, columnCount = 1) => {
+      if (rowCount === 1 && columnCount === 1) return getCell(rowIndex, columnIndex);
+      const composite = {
+        top: rowIndex * 15,
+        height: rowCount * 15,
+        left: columnIndex * 100,
+        width: columnCount * 100,
+        rowIndex,
+        columnIndex,
+        rowCount,
+        columnCount,
+        load: vi.fn(),
+        clear: vi.fn(() => {
+          for (let row = 0; row < rowCount; row += 1) {
+            for (let column = 0; column < columnCount; column += 1) {
+              getCell(rowIndex + row, columnIndex + column).values = [[""]];
+              getCell(rowIndex + row, columnIndex + column).formulas = [[""]];
+            }
+          }
+        }),
+        unmerge: vi.fn(),
+      };
+      Object.defineProperties(composite, {
+        values: {
+          get: () => Array.from({ length: rowCount }, (_, row) =>
+            Array.from({ length: columnCount }, (_, column) =>
+              getCell(rowIndex + row, columnIndex + column).values[0][0])),
+        },
+        formulas: {
+          get: () => Array.from({ length: rowCount }, (_, row) =>
+            Array.from({ length: columnCount }, (_, column) =>
+              getCell(rowIndex + row, columnIndex + column).formulas[0][0])),
+        },
+        text: {
+          get: () => Array.from({ length: rowCount }, (_, row) =>
+            Array.from({ length: columnCount }, (_, column) =>
+              String(getCell(rowIndex + row, columnIndex + column).values[0][0] ?? ""))),
+        },
+      });
+      return composite;
+    }),
     getUsedRangeOrNullObject: vi.fn(() => usedRange),
   };
   const settingsValues = new Map<string, unknown>();
@@ -721,7 +768,7 @@ describe("Excel evidence service", () => {
     expect(host.items.filter((shape) => shape.name.startsWith("EV__TS4_1_1__INVOICING__"))).toHaveLength(2);
   });
 
-  it("moves managed evidence below user cell content appended after existing images", async () => {
+  it("keeps existing evidence fixed and appends new evidence below user cells", async () => {
     const host = createHost();
     const firstName = await insertEvidence({
       scenario,
@@ -732,9 +779,12 @@ describe("Excel evidence service", () => {
     });
     const first = host.items.find((shape) => shape.name === firstName)!;
     const originalTop = first.top;
-    host.usedRange.height = first.top + first.height + 100;
+    for (let rowIndex = 71; rowIndex <= 75; rowIndex += 1) {
+      (host.sheet.getRangeByIndexes(rowIndex, 0) as { values: string[][] }).values = [[`User row ${rowIndex}`]];
+    }
+    host.usedRange.height = 76 * 15;
 
-    await insertEvidence({
+    const secondName = await insertEvidence({
       scenario,
       testTypeId: "SOA",
       moduleId: "INVOICING",
@@ -742,8 +792,74 @@ describe("Excel evidence service", () => {
       caption: "",
     });
 
-    expect(first.top).toBeGreaterThan(originalTop);
-    expect(first.top).toBeGreaterThanOrEqual(host.usedRange.height);
+    const second = host.items.find((shape) => shape.name === secondName)!;
+    expect(first.top).toBe(originalTop);
+    expect(second.top).toBeGreaterThanOrEqual(77 * 15);
+  });
+
+  it("does not use an open right slot beside left-side user data", async () => {
+    const host = createHost();
+    const firstName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "First",
+      side: "left",
+    });
+    const first = host.items.find((shape) => shape.name === firstName)!;
+    const originalTop = first.top;
+    for (let rowIndex = 71; rowIndex <= 75; rowIndex += 1) {
+      (host.sheet.getRangeByIndexes(rowIndex, 0) as { values: string[][] }).values = [[`Left user row ${rowIndex}`]];
+    }
+    host.usedRange.height = 76 * 15;
+
+    const afpName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "AFP",
+      image,
+      caption: "",
+    });
+
+    const afp = host.items.find((shape) => shape.name === afpName)!;
+    expect(first.top).toBe(originalTop);
+    expect(afp.left).toBe(420);
+    expect(afp.top).toBeGreaterThanOrEqual(77 * 15);
+  });
+
+  it("places new evidence below an unmanaged worksheet screenshot", async () => {
+    const host = createHost();
+    const firstName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "INVOICING",
+      image,
+      caption: "",
+    });
+    const first = host.items.find((shape) => shape.name === firstName)!;
+    const originalTop = first.top;
+    const userScreenshot = createShape("User screenshot", {
+      left: 0,
+      top: first.top + first.height + 10,
+      width: 820,
+      height: 180,
+    });
+    host.items.push(userScreenshot);
+
+    const nextName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "GENERIC_SCREENSHOT",
+      image,
+      caption: "After screenshot",
+      side: "left",
+    });
+
+    const next = host.items.find((shape) => shape.name === nextName)!;
+    expect(first.top).toBe(originalTop);
+    expect(userScreenshot.top).toBe(originalTop + first.height + 10);
+    expect(next.top).toBeGreaterThan(userScreenshot.top + userScreenshot.height);
   });
 
   it.each<GenericSide>(["left", "right"])("keeps blank-header Generic %s group fixed after repeated insertions", async (side) => {
@@ -1017,7 +1133,7 @@ describe("Excel evidence service", () => {
     expect(JSON.parse(inserted.altTextDescription ?? "{}").heading.address).not.toBe(originalAddress);
   });
 
-  it("skips a header row when another cell in its slot contains a formula", async () => {
+  it("preserves formulas beside an existing managed header", async () => {
     const host = createHost();
     const firstName = await insertEvidence({
       scenario,
@@ -1046,7 +1162,7 @@ describe("Excel evidence service", () => {
 
     expect(userCell.formulas).toEqual([["=IF(TRUE,\"\",\"\")"]]);
     const second = host.items.find((shape) => shape.name === secondName)!;
-    expect(JSON.parse(second.altTextDescription ?? "{}").heading.address).not.toBe(originalAddress);
+    expect(JSON.parse(second.altTextDescription ?? "{}").heading.address).toBe(originalAddress);
   });
 
   it("moves a paired group together when either header slot row contains user data", async () => {
@@ -1089,9 +1205,71 @@ describe("Excel evidence service", () => {
     const afpMetadata = JSON.parse(afp.altTextDescription ?? "{}");
     expect(userCell.values).toEqual([["Keep me"]]);
     expect(pdfMetadata.heading.address.slice(1)).toBe(afpMetadata.heading.address.slice(1));
-    expect(pdfMetadata.heading.address).not.toBe(originalAddress);
+    expect(pdfMetadata.heading.address).toBe(originalAddress);
     expect(pdf.top).toBe(afp.top);
     expect(secondPdf.top).toBeGreaterThan(pdf.top);
+  });
+
+  it("keeps a user-data gap below paired headers and aligns a later partner", async () => {
+    const host = createHost();
+    const pdfName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+    });
+    const pdf = host.items.find((shape) => shape.name === pdfName)!;
+    pdf.top = 700;
+    for (let rowIndex = 36; rowIndex <= 44; rowIndex += 1) {
+      (host.sheet.getRangeByIndexes(rowIndex, 0) as { values: string[][] }).values = [[`User row ${rowIndex}`]];
+    }
+    host.usedRange.height = 45 * 15;
+
+    const afpName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "AFP",
+      image,
+      caption: "",
+    });
+
+    const afp = host.items.find((shape) => shape.name === afpName)!;
+    const pdfMetadata = JSON.parse(pdf.altTextDescription ?? "{}");
+    const afpMetadata = JSON.parse(afp.altTextDescription ?? "{}");
+    expect(pdf.top).toBe(700);
+    expect(afp.top).toBe(700);
+    expect(pdfMetadata.heading.address.slice(1)).toBe(afpMetadata.heading.address.slice(1));
+  });
+
+  it("moves an existing partner row below user content that blocks the new side", async () => {
+    const host = createHost();
+    const pdfName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      image,
+      caption: "",
+    });
+    const pdf = host.items.find((shape) => shape.name === pdfName)!;
+    const originalTop = pdf.top;
+    for (let rowIndex = 36; rowIndex <= 40; rowIndex += 1) {
+      (host.sheet.getRangeByIndexes(rowIndex, 5) as { values: string[][] }).values = [[`Right user row ${rowIndex}`]];
+    }
+    host.usedRange.height = 41 * 15;
+
+    const afpName = await insertEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "AFP",
+      image,
+      caption: "",
+    });
+
+    const afp = host.items.find((shape) => shape.name === afpName)!;
+    expect(pdf.top).toBeGreaterThan(originalTop);
+    expect(pdf.top).toBeGreaterThanOrEqual(42 * 15);
+    expect(afp.top).toBe(pdf.top);
   });
 
   it("removes dynamic heading when its last Generic Screenshot is removed", async () => {

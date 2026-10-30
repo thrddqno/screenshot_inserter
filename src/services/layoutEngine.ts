@@ -68,7 +68,7 @@ const fitImageToSlotWidth = (
 
 const anchorFor = (anchors: LayoutAnchors, placement: Placement): Rectangle => anchors[placement];
 
-interface EvidenceGroup {
+export interface EvidenceLayoutGroup {
   key: string;
   signature: string;
   moduleIds: ModuleId[];
@@ -125,7 +125,7 @@ const evidenceFamilyKey = (moduleId: ModuleId): string => {
 const buildEvidenceGroups = (
   selectedModules: readonly ModuleId[],
   images: readonly LayoutImage[],
-): EvidenceGroup[] => {
+): EvidenceLayoutGroup[] => {
   const selected = new Set(selectedModules);
   let latestGenericHeading = "";
   let legacyGenericOccurrence = 0;
@@ -156,9 +156,9 @@ const buildEvidenceGroups = (
       };
     });
 
-  const groups: EvidenceGroup[] = [];
-  const stableGenericGroups = new Map<string, EvidenceGroup>();
-  const pairedGroups = new Map<string, EvidenceGroup>();
+  const groups: EvidenceLayoutGroup[] = [];
+  const stableGenericGroups = new Map<string, EvidenceLayoutGroup>();
+  const pairedGroups = new Map<string, EvidenceLayoutGroup>();
   let previousTimelineSignature: string | undefined;
   for (let index = 0; index < sequenced.length; index += 1) {
     const first = sequenced[index];
@@ -198,7 +198,7 @@ const buildEvidenceGroups = (
       continue;
     }
 
-    const group: EvidenceGroup = {
+    const group: EvidenceLayoutGroup = {
       key: `${signature}:${first.image.sequence}`,
       signature,
       moduleIds,
@@ -247,7 +247,7 @@ const buildEvidenceGroups = (
   return groups;
 };
 
-const descriptorForGroup = (group: EvidenceGroup): EvidenceGroupDescriptor => {
+const descriptorForGroup = (group: EvidenceLayoutGroup): EvidenceGroupDescriptor => {
   const moduleIds = [...group.moduleIds];
   const isGeneric = moduleIds[0] === "GENERIC_SCREENSHOT";
   const images = group.rows.flat();
@@ -292,6 +292,45 @@ export const getEvidenceGroups = (
   groupOrder?: readonly string[],
 ): EvidenceGroupDescriptor[] =>
   orderEvidenceGroups(buildEvidenceGroups(selectedModules, images), groupOrder).map(descriptorForGroup);
+
+export const getEvidenceLayoutGroups = (
+  selectedModules: readonly ModuleId[],
+  images: readonly LayoutImage[],
+  groupOrder?: readonly string[],
+): EvidenceLayoutGroup[] => orderEvidenceGroups(buildEvidenceGroups(selectedModules, images), groupOrder);
+
+export interface VerticalObstacleBand {
+  top: number;
+  bottom: number;
+}
+
+export const mergeVerticalObstacleBands = (
+  bands: readonly VerticalObstacleBand[],
+): VerticalObstacleBand[] => {
+  const ordered = bands
+    .filter((band) => Number.isFinite(band.top) && Number.isFinite(band.bottom) && band.bottom > band.top)
+    .sort((first, second) => first.top - second.top || first.bottom - second.bottom);
+  const merged: VerticalObstacleBand[] = [];
+  for (const band of ordered) {
+    const previous = merged.at(-1);
+    if (previous && band.top <= previous.bottom) previous.bottom = Math.max(previous.bottom, band.bottom);
+    else merged.push({ ...band });
+  }
+  return merged;
+};
+
+export const findFirstAvailableTop = (
+  requestedTop: number,
+  height: number,
+  bands: readonly VerticalObstacleBand[],
+): number => {
+  let top = requestedTop;
+  for (const band of mergeVerticalObstacleBands(bands)) {
+    if (top + height <= band.top) break;
+    if (top < band.bottom && top + height > band.top) top = band.bottom;
+  }
+  return top;
+};
 
 export const rectanglesIntersect = (a: Rectangle, b: Rectangle, gap = 0): boolean =>
   a.left < b.left + b.width + gap &&

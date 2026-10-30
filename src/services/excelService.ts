@@ -24,11 +24,15 @@ import {
 } from "./evidenceArrangement";
 import {
   buildLayout,
+  findFirstAvailableTop,
   getEvidenceGroups,
+  getEvidenceLayoutGroups,
+  mergeVerticalObstacleBands,
   type EvidenceGroupDescriptor,
   type LayoutAnchors,
   type LayoutImage,
   type Rectangle,
+  type VerticalObstacleBand,
 } from "./layoutEngine";
 import {
   captionShapeName,
@@ -667,6 +671,109 @@ const anchorsFromRanges = (
   full: { left: fullRange.left, top: 0, width: fullRange.width, height: 0 },
 });
 
+const rowAddress = (rowIndex: number, columnIndex: number): string =>
+  `${columnIndex === 5 ? "F" : "A"}${rowIndex + 1}`;
+
+const loadUserCellBands = async (
+  context: Excel.RequestContext,
+  sheet: Excel.Worksheet,
+  ownedHeadings: ReadonlyMap<string, ManagedHeadingMetadata>,
+  adoptedHeader?: ExistingHeaderReference,
+): Promise<VerticalObstacleBand[]> => {
+  const usedRange = sheet.getRange("A:I").getUsedRangeOrNullObject(true);
+  usedRange.load("rowIndex,rowCount");
+  await context.sync();
+  if (usedRange.isNullObject || usedRange.rowCount <= 0) return [];
+  const occupiedRows: number[] = [];
+  const firstRow = usedRange.rowIndex;
+  const finalRow = Math.min(1_048_576, firstRow + usedRange.rowCount);
+  const chunkSize = 500;
+  for (let start = firstRow; start < finalRow; start += chunkSize) {
+    const count = Math.min(chunkSize, finalRow - start);
+    const chunk = sheet.getRangeByIndexes(start, 0, count, 9);
+    chunk.load("values,formulas");
+    await context.sync();
+    for (let offset = 0; offset < count; offset += 1) {
+      const rowIndex = start + offset;
+      const occupied = Array.from({ length: 9 }, (_, columnIndex) => columnIndex).some((columnIndex) => {
+        const value = chunk.values[offset]?.[columnIndex];
+        const formula = chunk.formulas[offset]?.[columnIndex];
+        if (!rangeCellHasContent(value, formula)) return false;
+        if (columnIndex === 0 || columnIndex === 5) {
+          const address = rowAddress(rowIndex, columnIndex);
+          const owned = ownedHeadings.get(address);
+          if (owned?.text === value) return false;
+          if (
+            adoptedHeader &&
+            adoptedHeader.rowIndex === rowIndex &&
+            adoptedHeader.columnIndex === columnIndex &&
+            adoptedHeader.text === value
+          ) return false;
+        }
+        return true;
+      });
+      if (occupied) occupiedRows.push(rowIndex);
+    }
+  }
+  if (occupiedRows.length === 0) return [];
+
+  const runs: Array<{ start: number; end: number }> = [];
+  for (const rowIndex of occupiedRows) {
+    const previous = runs.at(-1);
+    if (previous && rowIndex === previous.end + 1) previous.end = rowIndex;
+    else runs.push({ start: rowIndex, end: rowIndex });
+  }
+  const ranges = runs.map((run) => ({
+    content: sheet.getRangeByIndexes(run.start, 0, run.end - run.start + 1, 9),
+    blank: sheet.getRangeByIndexes(Math.min(1_048_575, run.end + 1), 0, 1, 9),
+  }));
+  ranges.forEach(({ content, blank }) => {
+    content.load("top,height");
+    blank.load("top,height");
+  });
+  await context.sync();
+  return ranges.map(({ content, blank }) => ({
+    top: content.top,
+    bottom: Math.max(content.top + content.height, blank.top + blank.height),
+  }));
+};
+
+const bottomAfterBlankRow = async (
+  context: Excel.RequestContext,
+  sheet: Excel.Worksheet,
+  contentBottom: number,
+): Promise<number> => {
+  const rowIndex = await resolveRowAtTop(context, sheet, contentBottom);
+  const containing = sheet.getRangeByIndexes(rowIndex, 0, 1, 1);
+  containing.load("top,height");
+  await context.sync();
+  const blankRowIndex = containing.top + 0.01 < contentBottom ? Math.min(1_048_575, rowIndex + 1) : rowIndex;
+  const blank = sheet.getRangeByIndexes(blankRowIndex, 0, 1, 1);
+  blank.load("top,height");
+  await context.sync();
+  return blank.top + blank.height;
+};
+
+const shapeObstacleBands = async (
+  context: Excel.RequestContext,
+  sheet: Excel.Worksheet,
+  shapes: readonly Excel.Shape[],
+  canvasLeft: number,
+  canvasRight: number,
+): Promise<VerticalObstacleBand[]> => {
+  const intersecting = shapes.filter((shape) =>
+    shape.left < canvasRight && shape.left + shape.width > canvasLeft,
+  );
+  const bands: VerticalObstacleBand[] = [];
+  for (const shape of intersecting) {
+    bands.push({
+      top: shape.top,
+      bottom: await bottomAfterBlankRow(context, sheet, shape.top + shape.height),
+    });
+  }
+  return bands;
+};
+
 interface PendingHeading {
   heading: ReturnType<typeof buildLayout>["headings"][number];
   cell: Excel.Range;
@@ -679,6 +786,271 @@ interface PreparedEvidenceReflow {
   pendingHeadings: PendingHeading[];
   adoptedHeaderRange?: Excel.Range;
 }
+
+interface PreparedIncrementalInsertion {
+  newPlacement: ReturnType<typeof buildLayout>["images"][number];
+  movedPlacements: Map<string, Rectangle>;
+  pendingHeadings: PendingHeading[];
+  previousHeadingRanges: Array<{ heading: ManagedHeadingMetadata; range: Excel.Range }>;
+  headingByGroupAndModule: Map<string, ManagedHeadingMetadata>;
+  groupKeyByName: Map<string, string>;
+  metadataUpdates: Set<string>;
+  adoptedHeaderRange?: Excel.Range;
+}
+
+const bandIntersects = (band: VerticalObstacleBand, top: number, height: number): boolean =>
+  top < band.bottom && top + height > band.top;
+
+const prepareIncrementalInsertion = async ({
+  context,
+  sheet,
+  layoutImages,
+  newImageName,
+  existingShapes,
+  metadataByName,
+  anchors,
+  groupOrder,
+  userBands,
+  unmanagedBands,
+  adoptedHeader,
+}: {
+  context: Excel.RequestContext;
+  sheet: Excel.Worksheet;
+  layoutImages: readonly LayoutImage[];
+  newImageName: string;
+  existingShapes: ReadonlyMap<string, Excel.Shape>;
+  metadataByName: Map<string, ManagedShapeMetadata>;
+  anchors: LayoutAnchors;
+  groupOrder?: readonly string[];
+  userBands: readonly VerticalObstacleBand[];
+  unmanagedBands: readonly VerticalObstacleBand[];
+  adoptedHeader?: ExistingHeaderReference;
+}): Promise<PreparedIncrementalInsertion> => {
+  const selectedModules = [...new Set(layoutImages.map((image) => image.moduleId))];
+  const groups = getEvidenceLayoutGroups(selectedModules, layoutImages, groupOrder);
+  const targetGroup = groups.find((group) => group.rows.some((row) => row.some((image) => image.name === newImageName)));
+  if (!targetGroup) throw new ExcelServiceError("Could not resolve the new evidence group.");
+  const probe = buildLayout({
+    selectedModules,
+    images: layoutImages,
+    groupOrder,
+    anchors,
+    requestedBaseTop: 0,
+    obstacles: [],
+  });
+  const probeByName = new Map(probe.images.map((placement) => [placement.name, placement]));
+  const groupKeyByName = new Map(probe.images.map((placement) => [placement.name, placement.groupKey]));
+  const newProbe = probeByName.get(newImageName);
+  if (!newProbe) throw new ExcelServiceError("Could not plan the new evidence image.");
+  const targetNames = new Set(targetGroup.rows.flat().map((image) => image.name));
+  const existingTargetNames = [...targetNames].filter((name) => name !== newImageName && existingShapes.has(name));
+  const existingHeadingByModule = new Map<ModuleId, ManagedHeadingMetadata>();
+  for (const image of targetGroup.rows.flat()) {
+    if (image.name === newImageName) continue;
+    const heading = metadataByName.get(image.name)?.heading;
+    if (heading && !existingHeadingByModule.has(image.moduleId)) existingHeadingByModule.set(image.moduleId, heading);
+  }
+  const headingRanges = [...existingHeadingByModule.entries()].map(([moduleId, heading]) => ({
+    moduleId,
+    heading,
+    range: sheet.getRange(heading.address),
+  }));
+  headingRanges.forEach(({ range }) => range.load("values,formulas,top,height"));
+  if (headingRanges.length > 0) await context.sync();
+  const validHeadingRanges = headingRanges.filter(({ heading, range }) => range.values[0]?.[0] === heading.text);
+  const validHeadingByModule = new Map(
+    validHeadingRanges.map(({ moduleId, heading }) => [moduleId, heading]),
+  );
+  const requiredHeadings = probe.headings.filter((heading) => heading.groupKey === targetGroup.key);
+  const missingHeadings = requiredHeadings.filter((heading) => !validHeadingByModule.has(heading.moduleId));
+  const headingByGroupAndModule = new Map<string, ManagedHeadingMetadata>();
+  validHeadingByModule.forEach((heading, moduleId) => {
+    headingByGroupAndModule.set(`${targetGroup.key}|${moduleId}`, heading);
+  });
+  const movedPlacements = new Map<string, Rectangle>();
+  const pendingSpecifications: Array<{ heading: typeof requiredHeadings[number]; top: number }> = [];
+  const previousHeadingRanges: Array<{ heading: ManagedHeadingMetadata; range: Excel.Range }> = [];
+  const metadataUpdates = new Set<string>([newImageName, ...existingTargetNames]);
+  const obstacles = mergeVerticalObstacleBands([...userBands, ...unmanagedBands]);
+  const maxManagedBottom = Math.max(
+    0,
+    ...[...existingShapes.values()].map((shape) => shape.top + shape.height),
+  );
+
+  const relocateWholeTargetGroup = (): number => {
+    const targetProbeImages = probe.images.filter((placement) => placement.groupKey === targetGroup.key);
+    const targetProbeHeadings = requiredHeadings;
+    const probeTop = Math.min(
+      ...targetProbeImages.map((placement) => placement.top),
+      ...targetProbeHeadings.map((heading) => heading.top),
+    );
+    const probeBottom = Math.max(
+      ...targetProbeImages.map((placement) => placement.top + placement.height),
+      ...targetProbeHeadings.map((heading) => heading.top + heading.height),
+    );
+    const frozenBands = [...existingShapes.entries()]
+      .filter(([name]) => !targetNames.has(name))
+      .map(([, shape]) => ({ top: shape.top, bottom: shape.top + shape.height + LAYOUT_CONFIG.itemGap }));
+    const existingTop = Math.min(
+      ...existingTargetNames.map((name) => existingShapes.get(name)!.top),
+      ...validHeadingRanges.map(({ range }) => range.top),
+    );
+    const requestedTop = Number.isFinite(existingTop) ? existingTop : maxManagedBottom + LAYOUT_CONFIG.groupGap;
+    const baseTop = findFirstAvailableTop(
+      requestedTop,
+      probeBottom - probeTop,
+      [...obstacles, ...frozenBands],
+    );
+    for (const placement of targetProbeImages) {
+      const rectangle = {
+        left: placement.left,
+        top: baseTop + placement.top - probeTop,
+        width: placement.width,
+        height: placement.height,
+      };
+      if (placement.name === newImageName) continue;
+      movedPlacements.set(placement.name, rectangle);
+      metadataUpdates.add(placement.name);
+    }
+    validHeadingRanges.forEach(({ heading, range }) => previousHeadingRanges.push({ heading, range }));
+    targetProbeHeadings.forEach((heading) => pendingSpecifications.push({
+      heading,
+      top: baseTop + heading.top - probeTop,
+    }));
+    return baseTop + newProbe.top - probeTop;
+  };
+
+  let newTop: number;
+  const newRowIndex = targetGroup.rows.findIndex((row) => row.some((image) => image.name === newImageName));
+  const newRow = targetGroup.rows[newRowIndex];
+  const peerNames = newRow.filter((image) => image.name !== newImageName).map((image) => image.name);
+  const existingPeerShapes = peerNames.flatMap((name) => {
+    const shape = existingShapes.get(name);
+    return shape ? [shape] : [];
+  });
+  const headingTop = validHeadingRanges[0]?.range.top;
+  const headingCellHeight = validHeadingRanges[0]?.range.height ?? LAYOUT_CONFIG.headingHeight;
+  const headingBlocked = missingHeadings.length > 0 && (
+    headingTop === undefined || userBands.some((band) => bandIntersects(band, headingTop, headingCellHeight))
+  );
+
+  if (existingTargetNames.length === 0) {
+    const targetProbeImages = probe.images.filter((placement) => placement.groupKey === targetGroup.key);
+    const targetProbeHeadings = requiredHeadings;
+    const probeTop = Math.min(
+      ...targetProbeImages.map((placement) => placement.top),
+      ...targetProbeHeadings.map((heading) => heading.top),
+    );
+    const probeBottom = Math.max(
+      ...targetProbeImages.map((placement) => placement.top + placement.height),
+      ...targetProbeHeadings.map((heading) => heading.top + heading.height),
+    );
+    const baseTop = findFirstAvailableTop(
+      maxManagedBottom + LAYOUT_CONFIG.groupGap,
+      probeBottom - probeTop,
+      obstacles,
+    );
+    newTop = baseTop + newProbe.top - probeTop;
+    targetProbeHeadings.forEach((heading) => pendingSpecifications.push({
+      heading,
+      top: baseTop + heading.top - probeTop,
+    }));
+  } else if (headingBlocked) {
+    newTop = relocateWholeTargetGroup();
+  } else if (existingPeerShapes.length > 0) {
+    const desiredTop = Math.min(...existingPeerShapes.map((shape) => shape.top));
+    const rowHeight = Math.max(newProbe.height, ...existingPeerShapes.map((shape) => shape.height));
+    const tailNames = new Set(targetGroup.rows.slice(newRowIndex).flat().map((image) => image.name));
+    const frozenBands = [...existingShapes.entries()]
+      .filter(([name]) => !tailNames.has(name))
+      .map(([, shape]) => ({ top: shape.top, bottom: shape.top + shape.height + LAYOUT_CONFIG.itemGap }));
+    const targetBlocked = [...obstacles, ...frozenBands].some((band) => bandIntersects(band, desiredTop, rowHeight));
+    const laterRowTop = targetGroup.rows.slice(newRowIndex + 1)
+      .flatMap((row) => row.flatMap((image) => existingShapes.get(image.name)?.top ?? []))
+      .sort((first, second) => first - second)[0];
+    const tallerOverlap = laterRowTop !== undefined && desiredTop + rowHeight + LAYOUT_CONFIG.itemGap > laterRowTop;
+    if (!targetBlocked && !tallerOverlap) {
+      newTop = desiredTop;
+    } else {
+      let cursor = desiredTop;
+      newTop = desiredTop;
+      for (const row of targetGroup.rows.slice(newRowIndex)) {
+        const rowImages = row.filter((image) => image.name === newImageName || existingShapes.has(image.name));
+        const rowHeightForPlan = Math.max(...rowImages.map((image) =>
+          image.name === newImageName ? newProbe.height : existingShapes.get(image.name)!.height));
+        const rowTop = findFirstAvailableTop(cursor, rowHeightForPlan, [...obstacles, ...frozenBands]);
+        for (const image of rowImages) {
+          if (image.name === newImageName) {
+            newTop = rowTop;
+            continue;
+          }
+          const shape = existingShapes.get(image.name)!;
+          movedPlacements.set(image.name, {
+            left: shape.left,
+            top: rowTop,
+            width: shape.width,
+            height: shape.height,
+          });
+        }
+        cursor = rowTop + rowHeightForPlan + LAYOUT_CONFIG.itemGap;
+      }
+    }
+    if (missingHeadings.length > 0 && headingTop !== undefined) {
+      missingHeadings.forEach((heading) => pendingSpecifications.push({ heading, top: headingTop }));
+    }
+  } else {
+    newTop = findFirstAvailableTop(
+      maxManagedBottom + LAYOUT_CONFIG.itemGap,
+      newProbe.height,
+      obstacles,
+    );
+    if (missingHeadings.length > 0 && headingTop !== undefined) {
+      missingHeadings.forEach((heading) => pendingSpecifications.push({ heading, top: headingTop }));
+    }
+  }
+
+  const pendingHeadings: PendingHeading[] = [];
+  for (const { heading, top } of pendingSpecifications) {
+    const rowIndex = await resolveRowAtTop(context, sheet, top);
+    const columnIndex = EVIDENCE_MODULES[heading.moduleId].placement === "right" ? 5 : 0;
+    const cell = sheet.getRangeByIndexes(rowIndex, columnIndex, 1, 1);
+    cell.load("values,formulas");
+    pendingHeadings.push({
+      heading: { ...heading, top },
+      cell,
+      address: rowAddress(rowIndex, columnIndex),
+    });
+  }
+  if (pendingHeadings.length > 0) await context.sync();
+  for (const pending of pendingHeadings) {
+    const owned = existingHeadingByModule.get(pending.heading.moduleId);
+    if (cellHasContent(pending.cell) && pending.cell.values[0]?.[0] !== owned?.text) {
+      throw new ExcelServiceError(`Heading cell ${pending.address} contains user content.`);
+    }
+    headingByGroupAndModule.set(`${targetGroup.key}|${pending.heading.moduleId}`, {
+      address: pending.address,
+      text: pending.heading.text,
+    });
+  }
+
+  return {
+    newPlacement: { ...newProbe, top: newTop },
+    movedPlacements,
+    pendingHeadings,
+    previousHeadingRanges,
+    headingByGroupAndModule,
+    groupKeyByName,
+    metadataUpdates,
+    adoptedHeaderRange: adoptedHeader
+      ? sheet.getRangeByIndexes(
+          adoptedHeader.rowIndex,
+          adoptedHeader.columnIndex,
+          1,
+          adoptedHeader.columnCount,
+        )
+      : undefined,
+  };
+};
 
 const cellHasContent = (cell: Excel.Range): boolean => {
   const value = cell.values[0]?.[0];
@@ -892,6 +1264,70 @@ const applyEvidenceReflow = ({
   }
 };
 
+const applyIncrementalInsertion = ({
+  prepared,
+  newShape,
+  shapeByName,
+  layoutImages,
+  metadataByName,
+  testTypeId,
+}: {
+  prepared: PreparedIncrementalInsertion;
+  newShape: Excel.Shape;
+  shapeByName: Map<string, Excel.Shape>;
+  layoutImages: readonly LayoutImage[];
+  metadataByName: Map<string, ManagedShapeMetadata>;
+  testTypeId: TestTypeId;
+}): void => {
+  if (prepared.adoptedHeaderRange) {
+    prepared.adoptedHeaderRange.unmerge();
+    prepared.adoptedHeaderRange.clear("All");
+  }
+  for (const { heading, range } of prepared.previousHeadingRanges) {
+    if (range.values[0]?.[0] === heading.text) range.clear("All");
+  }
+  for (const { heading, cell, address } of prepared.pendingHeadings) {
+    cell.formulas = [[toLiteralCellFormula(heading.text)]];
+    cell.format.fill.color = LAYOUT_CONFIG.headingFillColor;
+    cell.format.font.bold = true;
+    cell.format.font.color = LAYOUT_CONFIG.headingFontColor;
+    prepared.headingByGroupAndModule.set(`${heading.groupKey}|${heading.moduleId}`, {
+      address,
+      text: heading.text,
+    });
+  }
+  for (const [name, rectangle] of prepared.movedPlacements) {
+    const shape = shapeByName.get(name);
+    if (!shape) throw new ExcelServiceError(`Managed image "${name}" is missing.`);
+    shape.lockAspectRatio = false;
+    setShapeRectangle(shape, rectangle);
+    shape.lockAspectRatio = true;
+  }
+  newShape.lockAspectRatio = false;
+  setShapeRectangle(newShape, prepared.newPlacement);
+  newShape.lockAspectRatio = true;
+
+  const imageByName = new Map(layoutImages.map((layoutImage) => [layoutImage.name, layoutImage]));
+  for (const name of prepared.metadataUpdates) {
+    const shape = name === prepared.newPlacement.name ? newShape : shapeByName.get(name);
+    const layoutImage = imageByName.get(name);
+    const metadata = metadataByName.get(name);
+    const groupKey = prepared.groupKeyByName.get(name);
+    if (!shape || !layoutImage || !metadata || !groupKey) {
+      throw new ExcelServiceError(`Managed image "${name}" is missing.`);
+    }
+    shape.altTextDescription = JSON.stringify({
+      version: MANAGED_METADATA_VERSION,
+      testTypeId,
+      caption: layoutImage.caption,
+      side: layoutImage.moduleId === "GENERIC_SCREENSHOT" ? layoutImage.side ?? "left" : undefined,
+      genericGroupId: layoutImage.genericGroupId,
+      genericGroupHeader: layoutImage.genericGroupHeader,
+      heading: prepared.headingByGroupAndModule.get(`${groupKey}|${layoutImage.moduleId}`),
+    } satisfies ManagedShapeMetadata);
+  }
+};
+
 export const insertEvidence = async ({
   scenario,
   testTypeId,
@@ -924,7 +1360,6 @@ export const insertEvidence = async ({
       const leftRange = sheet.getRange(LAYOUT_CONFIG.leftAnchorRange);
       const rightRange = sheet.getRange(LAYOUT_CONFIG.rightAnchorRange);
       const fullRange = sheet.getRange(LAYOUT_CONFIG.fullAnchorRange);
-      const usedRange = sheet.getUsedRangeOrNullObject(true);
       const sourcePicture = sourceShape
         ? context.workbook.worksheets
             .getItem(sourceShape.worksheetId)
@@ -939,7 +1374,6 @@ export const insertEvidence = async ({
       leftRange.load("left,width");
       rightRange.load("left,width");
       fullRange.load("left,width");
-      usedRange.load("top,height");
       sourcePicture?.load("type,width,height");
       const adoptedHeaderRange = adoptedHeader
         ? sheet.getRangeByIndexes(
@@ -977,19 +1411,12 @@ export const insertEvidence = async ({
 
       const layoutImages: LayoutImage[] = [];
       const metadataByName = new Map<string, ManagedShapeMetadata>();
-      const existingManagedBases: number[] = [];
       for (const shape of shapes.items) {
         const parsed = parseImageShapeName(shape.name);
         if (parsed?.scenarioKey !== targetScenarioKey) continue;
         const metadata = parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId);
         if (metadata.testTypeId !== testTypeId) continue;
         metadataByName.set(shape.name, metadata);
-        existingManagedBases.push(
-          shape.top -
-            (hasManagedHeading(parsed.moduleId, metadata)
-              ? LAYOUT_CONFIG.headingHeight + LAYOUT_CONFIG.headingGap
-              : 0),
-        );
         layoutImages.push({
           name: shape.name,
           moduleId: parsed.moduleId,
@@ -1051,22 +1478,7 @@ export const insertEvidence = async ({
             return firstTop - secondTop || (originalPosition.get(first) ?? 0) - (originalPosition.get(second) ?? 0);
           });
       }
-      const managedBottom = Math.max(
-        0,
-        ...shapes.items
-          .filter((shape) => {
-            const parsed = parseImageShapeName(shape.name);
-            return parsed?.scenarioKey === targetScenarioKey &&
-              parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId).testTypeId === testTypeId;
-          })
-          .map((shape) => shape.top + shape.height),
-      );
-      const usedBottom = usedRange.isNullObject ? 0 : usedRange.top + usedRange.height;
-      const userContentFloor = existingManagedBases.length > 0 &&
-        usedBottom > managedBottom + LAYOUT_CONFIG.collisionGap
-        ? usedBottom + LAYOUT_CONFIG.groupGap
-        : 0;
-      const obstacles = shapes.items
+      const obstacleShapes = shapes.items
         .filter((shape) => {
           if (sourceShape && shape.id === sourceShape.shapeId) return false;
           const parsed = parseImageShapeName(shape.name);
@@ -1074,24 +1486,38 @@ export const insertEvidence = async ({
             return parseManagedMetadata(shape.altTextDescription ?? "", parsed.moduleId).testTypeId !== testTypeId;
           }
           return !isManagedShapeName(shape.name);
-        })
-        .map((shape) => ({ left: shape.left, top: shape.top, width: shape.width, height: shape.height }));
-      const requestedBaseTop =
-        existingManagedBases.length > 0
-          ? Math.max(0, Math.min(...existingManagedBases), userContentFloor)
-          : usedRange.isNullObject
-            ? LAYOUT_CONFIG.groupGap
-            : usedRange.top + usedRange.height + LAYOUT_CONFIG.groupGap;
-      const prepared = await prepareEvidenceReflow({
+        });
+      const anchors = anchorsFromRanges(leftRange, rightRange, fullRange);
+      const ownedHeadings = new Map<string, ManagedHeadingMetadata>();
+      for (const metadata of metadataByName.values()) {
+        if (metadata.heading) ownedHeadings.set(metadata.heading.address, metadata.heading);
+      }
+      const userBands = await loadUserCellBands(context, sheet, ownedHeadings, adoptedHeader);
+      const unmanagedBands = await shapeObstacleBands(
         context,
         sheet,
-        testTypeId,
+        obstacleShapes,
+        anchors.left.left,
+        anchors.right.left + anchors.right.width,
+      );
+      const preparedIncremental = await prepareIncrementalInsertion({
+        context,
+        sheet,
         layoutImages,
-        previousMetadata: metadataByName.values(),
+        newImageName: createdImageName,
+        existingShapes: new Map(
+          layoutImages
+            .filter((layoutImage) => layoutImage.name !== createdImageName)
+            .flatMap((layoutImage) => {
+              const shape = shapes.items.find((candidate) => candidate.name === layoutImage.name);
+              return shape ? [[layoutImage.name, shape] as const] : [];
+            }),
+        ),
+        metadataByName,
+        anchors,
         groupOrder: effectiveGroupOrder,
-        anchors: anchorsFromRanges(leftRange, rightRange, fullRange),
-        requestedBaseTop,
-        obstacles,
+        userBands,
+        unmanagedBands,
         adoptedHeader,
       });
 
@@ -1112,7 +1538,14 @@ export const insertEvidence = async ({
         }
       }
 
-      applyEvidenceReflow({ prepared, shapeByName, layoutImages, metadataByName, testTypeId });
+      applyIncrementalInsertion({
+        prepared: preparedIncremental,
+        newShape: newImage,
+        shapeByName,
+        layoutImages,
+        metadataByName,
+        testTypeId,
+      });
       if (effectiveGroupOrder.length > 0 && (groupOrder.length > 0 || Boolean(adoptedHeader))) {
         saveGroupOrder(
           context,

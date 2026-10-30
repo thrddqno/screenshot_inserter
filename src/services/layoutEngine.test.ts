@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLayout,
+  findFirstAvailableTop,
+  mergeVerticalObstacleBands,
   getEvidenceGroups,
   rectanglesIntersect,
   type ImagePlacement,
@@ -26,6 +28,23 @@ const expectChronologicalOrder = (placements: readonly ImagePlacement[], names: 
     }
   }
 };
+
+describe("vertical obstacle allocation", () => {
+  it("merges adjacent obstacles and finds the first complete gap", () => {
+    const bands = mergeVerticalObstacleBands([
+      { top: 100, bottom: 180 },
+      { top: 170, bottom: 230 },
+      { top: 400, bottom: 450 },
+    ]);
+    expect(bands).toEqual([
+      { top: 100, bottom: 230 },
+      { top: 400, bottom: 450 },
+    ]);
+    expect(findFirstAvailableTop(120, 100, bands)).toBe(230);
+    expect(findFirstAvailableTop(250, 100, bands)).toBe(250);
+    expect(findFirstAvailableTop(350, 100, bands)).toBe(450);
+  });
+});
 
 const imagesFor = (moduleIds: readonly LayoutImage["moduleId"][]): LayoutImage[] =>
   moduleIds.map((moduleId, index) => ({
