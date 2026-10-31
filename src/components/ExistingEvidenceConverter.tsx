@@ -9,6 +9,7 @@ import {
 } from "../services/excelService";
 import type {
   ExistingEvidenceScan,
+  ExistingEvidenceConversionResult,
   ExistingHeaderReference,
   ModuleId,
   PendingImage,
@@ -24,7 +25,7 @@ interface ExistingEvidenceConverterProps {
   testTypeName: string;
   moduleIds: readonly ModuleId[];
   onAdoptHeader: (header: ExistingHeaderReference, moduleId: ModuleId) => void;
-  onConverted: (count: number) => void;
+  onConverted: (result: ExistingEvidenceConversionResult) => void;
   onBack: () => void;
 }
 
@@ -46,6 +47,7 @@ export default function ExistingEvidenceConverter({
   const [previews, setPreviews] = useState<Map<string, PendingImage>>(new Map());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [progress, setProgress] = useState<string>();
 
   useEffect(() => () => {
     previews.forEach((preview) => URL.revokeObjectURL(preview.previewUrl));
@@ -58,6 +60,7 @@ export default function ExistingEvidenceConverter({
 
   const readSelection = async () => {
     setBusy(true);
+    setProgress("Scanning worksheet…");
     setError(undefined);
     try {
       const header = await readSelectedExistingHeader(scenario);
@@ -84,6 +87,7 @@ export default function ExistingEvidenceConverter({
       setError(message(cause));
     } finally {
       setBusy(false);
+      setProgress(undefined);
     }
   };
 
@@ -91,6 +95,7 @@ export default function ExistingEvidenceConverter({
     setModuleId(nextModuleId);
     if (!scan || mode === "header") return;
     setBusy(true);
+    setProgress("Scanning worksheet…");
     setError(undefined);
     try {
       const result = await scanExistingEvidence(scan.header, nextModuleId);
@@ -108,26 +113,29 @@ export default function ExistingEvidenceConverter({
       setError(message(cause));
     } finally {
       setBusy(false);
+      setProgress(undefined);
     }
   };
 
   const convert = async () => {
     if (!scan) return;
     setBusy(true);
+    setProgress("Validating and converting in place…");
     setError(undefined);
     try {
-      const names = await convertExistingEvidence({
+      const result = await convertExistingEvidence({
         scenario,
         testTypeId,
         moduleId,
         header: scan.header,
         pictures: selectedPictures,
       });
-      onConverted(names.length);
+      onConverted(result);
     } catch (cause) {
       setError(message(cause));
     } finally {
       setBusy(false);
+      setProgress(undefined);
     }
   };
 
@@ -195,7 +203,14 @@ export default function ExistingEvidenceConverter({
         </section>
       ) : null}
 
+      {scan && mode === "pictures" && selectedPictures.length > 0 ? (
+        <p className="converter-note" role="status">
+          {selectedPictures.length} selected picture{selectedPictures.length === 1 ? "" : "s"} and header will stay in their current worksheet positions.
+        </p>
+      ) : null}
+
       {error ? <div className="message message-error" role="alert">{error}</div> : null}
+      {progress ? <div className="message" role="status">{progress}</div> : null}
       <div className="arranger-actions">
         {mode === "header" ? (
           <button className="button button-primary" type="button" disabled={busy || !scan} onClick={() => scan && onAdoptHeader(scan.header, moduleId)}>
@@ -203,7 +218,7 @@ export default function ExistingEvidenceConverter({
           </button>
         ) : (
           <button className="button button-primary" type="button" disabled={busy || selectedPictures.length === 0} onClick={() => void convert()}>
-            Convert {selectedPictures.length || ""} Picture{selectedPictures.length === 1 ? "" : "s"}
+            Convert {selectedPictures.length || ""} in place
           </button>
         )}
       </div>

@@ -38,6 +38,7 @@ import {
 import type {
   EvidenceStatus,
   ExistingHeaderReference,
+  ExistingEvidenceConversionResult,
   GenericSide,
   ModuleId,
   PendingImage,
@@ -607,10 +608,11 @@ export default function App() {
     setMessage({ kind: "info", text: `Header ${header.address} will be used for the next insertion.` });
   };
 
-  const handleConvertedExistingEvidence = (count: number) => {
+  const handleConvertedExistingEvidence = (result: ExistingEvidenceConversionResult) => {
     viewRef.current = "insert";
     setView("insert");
-    setMessage({ kind: "success", text: `Converted ${count} existing picture${count === 1 ? "" : "s"}.` });
+    const count = result.converted.length;
+    setMessage({ kind: "success", text: `Converted ${count} existing picture${count === 1 ? "" : "s"} in place.` });
   };
 
   const busy = !preferencesLoaded || refreshing || operationBusy || pasteBusy;

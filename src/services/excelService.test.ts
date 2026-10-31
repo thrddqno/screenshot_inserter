@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenericSide, ModuleId, PendingImage, ScenarioContext } from "../types/evidence";
 import {
   applyEvidenceArrangement,
+  convertExistingEvidence,
   insertEvidence,
   inferExistingHeaderModule,
   readEvidenceArrangement,
@@ -76,6 +77,7 @@ const createHost = () => {
   const headingCells = new Map<string, {
     values: string[][];
     formulas: string[][];
+    text?: string[][];
     top: number;
     height: number;
     load: ReturnType<typeof vi.fn>;
@@ -144,6 +146,10 @@ const createHost = () => {
             const raw = value[0]?.[0] ?? "";
             cell!.values = [[raw.startsWith("'") ? raw.slice(1) : raw]];
           },
+          enumerable: true,
+        });
+        Object.defineProperty(cell, "text", {
+          get: () => [[String(cell!.values[0]?.[0] ?? "")]],
           enumerable: true,
         });
         headingCells.set(key, cell);
@@ -232,6 +238,131 @@ describe("Excel evidence service", () => {
       .toBe("GENERIC_SCREENSHOT");
   });
 
+  it("converts multiple existing pictures in place under the original header", async () => {
+    const host = createHost();
+    const first = host.legacyShape;
+    first.id = "legacy-1";
+    first.top = 120;
+    first.left = 10;
+    const second = createShape("Picture 2", {
+      id: "legacy-2",
+      top: 540,
+      left: 20,
+      width: 280,
+      height: 220,
+    });
+    host.items.push(second);
+    const headerCell = host.sheet.getRangeByIndexes(4, 0) as ReturnType<typeof host.sheet.getRangeByIndexes> & {
+      values: string[][];
+    };
+    headerCell.values = [["PDF"]];
+    const original = [first, second].map((shape) => ({
+      id: shape.id,
+      left: shape.left,
+      top: shape.top,
+      width: shape.width,
+      height: shape.height,
+    }));
+
+    const result = await convertExistingEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      header: {
+        worksheetId: "sheet-1",
+        worksheetName: scenario.worksheetName,
+        address: "TS4.1.1!A5:D5",
+        rowIndex: 4,
+        columnIndex: 0,
+        columnCount: 4,
+        text: "PDF",
+        top: 60,
+        height: 15,
+      },
+      pictures: [first, second].map((shape) => ({
+        worksheetId: "sheet-1",
+        shapeId: shape.id,
+        name: shape.name,
+        left: shape.left,
+        top: shape.top,
+        width: shape.width,
+        height: shape.height,
+        side: "left" as const,
+      })),
+    });
+
+    expect(result).toMatchObject({ preservedInPlace: 2 });
+    expect(result.converted.map(({ name }) => name)).toEqual([
+      "EV__TS4_1_1__PDF_PAPER__001",
+      "EV__TS4_1_1__PDF_PAPER__002",
+    ]);
+    for (const [index, shape] of [first, second].entries()) {
+      expect(shape).toMatchObject(original[index]);
+      expect(shape.delete).not.toHaveBeenCalled();
+      expect(JSON.parse(shape.altTextDescription ?? "{}")).toMatchObject({
+        version: 5,
+        testTypeId: "SOA",
+        sourceShapeId: original[index].id,
+        heading: {
+          address: "A5",
+          rangeAddress: "A5:D5",
+          origin: "adopted",
+          columnCount: 4,
+        },
+      });
+    }
+    expect(headerCell.values).toEqual([["PDF"]]);
+    expect(headerCell.clear).not.toHaveBeenCalled();
+    expect(headerCell.unmerge).not.toHaveBeenCalled();
+
+    await expect(removeLastInsertedEvidence(scenario, "SOA"))
+      .resolves.toBe("EV__TS4_1_1__PDF_PAPER__002");
+    expect(second.delete).toHaveBeenCalledOnce();
+    expect(first.delete).not.toHaveBeenCalled();
+    expect(first.top).toBe(original[0].top);
+    expect(headerCell.values).toEqual([["PDF"]]);
+    expect(headerCell.clear).not.toHaveBeenCalled();
+  });
+
+  it("aborts in-place conversion before mutation when picture geometry changed", async () => {
+    const host = createHost();
+    const headerCell = host.sheet.getRangeByIndexes(4, 0) as ReturnType<typeof host.sheet.getRangeByIndexes> & {
+      values: string[][];
+    };
+    headerCell.values = [["PDF"]];
+    const originalName = host.legacyShape.name;
+
+    await expect(convertExistingEvidence({
+      scenario,
+      testTypeId: "SOA",
+      moduleId: "PDF_PAPER",
+      header: {
+        worksheetId: "sheet-1",
+        worksheetName: scenario.worksheetName,
+        address: "TS4.1.1!A5",
+        rowIndex: 4,
+        columnIndex: 0,
+        columnCount: 1,
+        text: "PDF",
+        top: 60,
+        height: 15,
+      },
+      pictures: [{
+        worksheetId: "sheet-1",
+        shapeId: host.legacyShape.id,
+        name: host.legacyShape.name,
+        left: host.legacyShape.left,
+        top: host.legacyShape.top + 20,
+        width: host.legacyShape.width,
+        height: host.legacyShape.height,
+        side: "left",
+      }],
+    })).rejects.toThrow("moved or resized");
+
+    expect(host.legacyShape.name).toBe(originalName);
+    expect(host.legacyShape.altTextDescription).toBeUndefined();
+  });
+
   it("adopts an existing worksheet header for the next inserted picture", async () => {
     const host = createHost();
     const source = host.sheet.getRangeByIndexes(20, 0) as ReturnType<typeof host.sheet.getRangeByIndexes> & {
@@ -239,7 +370,6 @@ describe("Excel evidence service", () => {
       text?: string[][];
     };
     source.values = [["PDF"]];
-    source.text = [["PDF"]];
 
     const name = await insertEvidence({
       scenario,
@@ -260,8 +390,9 @@ describe("Excel evidence service", () => {
       },
     });
 
-    expect(source.unmerge).toHaveBeenCalledOnce();
-    expect(source.clear).toHaveBeenCalledWith("All");
+    expect(source.unmerge).not.toHaveBeenCalled();
+    expect(source.clear).not.toHaveBeenCalled();
+    expect(source.values).toEqual([["PDF"]]);
     const inserted = host.items.find((shape) => shape.name === name)!;
     expect(JSON.parse(inserted.altTextDescription ?? "{}").heading.text).toBe("PDF");
   });
@@ -367,7 +498,7 @@ describe("Excel evidence service", () => {
     const inserted = host.items.find((shape) => shape.name === name)!;
     expect(inserted).toMatchObject({ left: 0, width: 400, height: 500, lockAspectRatio: true });
     expect(JSON.parse(inserted.altTextDescription ?? "{}")).toMatchObject({
-      version: 4,
+      version: 5,
       testTypeId: "SOA",
       side: "left",
     });
@@ -567,7 +698,7 @@ describe("Excel evidence service", () => {
     });
 
     expect(JSON.parse(legacyManaged.altTextDescription ?? "{}")).toMatchObject({
-      version: 4,
+      version: 5,
       testTypeId: "SOA",
       caption: "Legacy Header",
       side: "left",
@@ -596,7 +727,7 @@ describe("Excel evidence service", () => {
     });
 
     expect(JSON.parse(legacyManaged.altTextDescription ?? "{}")).toMatchObject({
-      version: 4,
+      version: 5,
       testTypeId: "GENERAL",
       side: "left",
     });
@@ -949,7 +1080,7 @@ describe("Excel evidence service", () => {
     const firstMetadata = JSON.parse(firstA.altTextDescription ?? "{}");
     const secondMetadata = JSON.parse(secondA.altTextDescription ?? "{}");
     const bMetadata = JSON.parse(b.altTextDescription ?? "{}");
-    expect(firstMetadata).toMatchObject({ version: 4, genericGroupHeader: "A" });
+    expect(firstMetadata).toMatchObject({ version: 5, genericGroupHeader: "A" });
     expect(secondMetadata.genericGroupId).toBe(firstMetadata.genericGroupId);
     expect(bMetadata.genericGroupId).not.toBe(firstMetadata.genericGroupId);
     expect(firstA.top).toBe(secondA.top);

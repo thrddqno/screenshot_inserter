@@ -49,7 +49,7 @@ const SortableEvidenceGroup = ({
 }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: group.key,
-    disabled: busy,
+    disabled: busy || group.anchored,
   });
   return (
     <li
@@ -61,7 +61,7 @@ const SortableEvidenceGroup = ({
       <button
         className="drag-handle"
         type="button"
-        disabled={busy}
+        disabled={busy || group.anchored}
         aria-label={`Drag ${group.label}`}
         {...attributes}
         {...listeners}
@@ -74,6 +74,7 @@ const SortableEvidenceGroup = ({
         <div className="arranger-badges">
           {group.kind === "paired" ? <span className="arranger-badge">Paired</span> : null}
           {!group.showHeading ? <span className="arranger-badge muted">No heading</span> : null}
+          {group.anchored ? <span className="arranger-badge">Fixed in place</span> : null}
         </div>
       </div>
       <div className="arranger-move-buttons">
@@ -81,14 +82,14 @@ const SortableEvidenceGroup = ({
           className="button button-secondary"
           type="button"
           aria-label={`Move ${group.label} up`}
-          disabled={busy || position === 1}
+          disabled={busy || group.anchored || position === 1}
           onClick={() => onMove(-1)}
         >↑</button>
         <button
           className="button button-secondary"
           type="button"
           aria-label={`Move ${group.label} down`}
-          disabled={busy || position === total}
+          disabled={busy || group.anchored || position === total}
           onClick={() => onMove(1)}
         >↓</button>
       </div>
@@ -124,6 +125,7 @@ export default function EvidenceArranger({
     return group ? [group] : [];
   });
   const dirty = !sameOrder(order, initialOrder);
+  const hasAnchoredGroups = groups.some((group) => group.anchored);
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
@@ -147,7 +149,11 @@ export default function EvidenceArranger({
         </button>
         <p className="eyebrow">{scenarioId} · {testTypeName}</p>
         <h1 className="content-title">Arrange Evidence</h1>
-        <p className="arranger-instructions">Drag evidence sections into worksheet order.</p>
+        <p className="arranger-instructions">
+          {hasAnchoredGroups
+            ? "Converted sections stay fixed to their existing worksheet headers."
+            : "Drag evidence sections into worksheet order."}
+        </p>
       </header>
 
       {loading ? (
@@ -178,7 +184,7 @@ export default function EvidenceArranger({
         <button
           className="button button-secondary"
           type="button"
-          disabled={busy || groups.length === 0 || (!hasManualOrder && !dirty)}
+          disabled={busy || hasAnchoredGroups || groups.length === 0 || (!hasManualOrder && !dirty)}
           onClick={() => {
             if (hasManualOrder) void onReset();
             else setOrder(initialOrder);
@@ -189,7 +195,7 @@ export default function EvidenceArranger({
         <button
           className="button button-primary"
           type="button"
-          disabled={busy || groups.length === 0 || !dirty}
+          disabled={busy || hasAnchoredGroups || groups.length === 0 || !dirty}
           onClick={() => void onApply(order)}
         >
           Apply Arrangement

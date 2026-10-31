@@ -84,6 +84,7 @@ export interface EvidenceGroupDescriptor {
   firstSequence: number;
   kind: "module" | "paired" | "generic";
   showHeading: boolean;
+  anchored?: boolean;
 }
 
 interface SequencedImage {

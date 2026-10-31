@@ -97,3 +97,15 @@ export interface ExistingEvidenceScan {
   header: ExistingHeaderReference;
   pictures: ExistingEvidencePictureCandidate[];
 }
+
+export interface ConvertedExistingPicture {
+  shapeId: string;
+  name: string;
+}
+
+export interface ExistingEvidenceConversionResult {
+  conversionId: string;
+  converted: ConvertedExistingPicture[];
+  preservedInPlace: number;
+  groupOrderChanged: boolean;
+}
